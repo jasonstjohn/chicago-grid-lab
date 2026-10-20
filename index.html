@@ -906,7 +906,7 @@ function say(html){ $("answer").innerHTML=html; }
 
 function renderLists(){
   const box=$("lists"); box.querySelectorAll("button").forEach(b=>b.remove());
-  for (const l of LISTS){ const b=document.createElement("button"); b.type="button"; b.className="chip"; b.textContent=`${l.label} (${l.names.length})`; b.onclick=()=>showList(l); box.appendChild(b); }
+  for (const l of LISTS){ const b=document.createElement("button"); b.type="button"; b.className="chip"; b.textContent=`${l.label} (${l.short?NET.shortest.length:l.names.length})`; b.onclick=()=>showList(l); box.appendChild(b); }
 }
 function showList(l){
   $("streetSort").value = l.order==="geo" ? "geo" : "sel";
