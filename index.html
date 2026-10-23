@@ -293,6 +293,33 @@ footer a,.sec a{color:var(--blue)}
         <div class="tablewrap"><table id="interTable"></table></div>
         <p class="note" id="interNote"></p>
       </div>
+      <div>
+        <div class="scope">
+          <h3>Diagonals by 6-way corners</h3>
+          <button class="btn small" id="btnExportDiagSix" type="button">Export .txt</button>
+        </div>
+        <div class="tablewrap"><table id="diagSixTable"></table></div>
+        <p class="note" id="diagSixNote"></p>
+      </div>
+      <div>
+        <div class="scope">
+          <h3>Streets without a dead end</h3>
+          <button class="btn small" id="btnExportNoDead" type="button">Export .txt</button>
+        </div>
+        <div class="tablewrap"><table id="noDeadTable"></table></div>
+        <p class="note" id="noDeadNote">Streets over a mile long (under the current class/status filters) where every piece's loose end still touches another street - it never simply stops.</p>
+      </div>
+    </section>
+
+    <section class="sec" id="orderSec">
+      <h2>Street order</h2>
+      <p class="note">The grid streets (everything outside the off-grid-diagonals list above), in the order you'd cross them.</p>
+      <div class="scope"><h3>North–south, east to west</h3><button class="btn small" id="btnExportNS" type="button">Export .txt</button></div>
+      <div class="tablewrap"><table id="orderNSTable"></table></div>
+      <div class="scope"><h3>East–west, north from Madison</h3><button class="btn small" id="btnExportEWN" type="button">Export .txt</button></div>
+      <div class="tablewrap"><table id="orderEWNTable"></table></div>
+      <div class="scope"><h3>East–west, south from Madison</h3><button class="btn small" id="btnExportEWS" type="button">Export .txt</button></div>
+      <div class="tablewrap"><table id="orderEWSTable"></table></div>
     </section>
 
     <section class="sec" id="shortSec">
@@ -627,12 +654,13 @@ function streetGeo(N, j, elig){
   if (!L) return null;
   const x=sx/L, y=sy/L, isNS = ns>=ew;
   let line=null, best=0; for (const [v,l] of ewns) if (l>best){ best=l; line=v; }
+  const pos = line!==null ? line*FT_ADDR : (isNS ? x : y);   // feet-equivalent position, for ordering - the official grid line beats a noisy mean position
   const est = isNS ? Math.abs(x)/FT_ADDR : Math.abs(y)/FT_ADDR;
   const gridLine = line!==null ? `${Math.abs(line).toLocaleString()} ${isNS?(line<0?"W":"E"):(line<0?"S":"N")}`
                  : !N.meta.anchored ? ""
                  : (ewnsF && est<150) ? "0 (baseline)"          // State and Madison carry EWNS 0
                  : "≈ "+(isNS?addrX(x):addrY(y));
-  return { ns:isNS, x, y, gridLine };
+  return { ns:isNS, x, y, pos, gridLine };
 }
 /* Geographic order: N-S streets west to east, then E-W streets north to south */
 function geoCompare(a, b){
@@ -646,10 +674,9 @@ function notableLists(N, elig){
   const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]));
   const J = named.filter(j => N.sL[j]>0);
   const byL = J.slice().sort((a,b)=>N.sL[b]-N.sL[a]);
-  const devOf = j => N.sDev[j]/N.sL[j];
   const lists = [
     { id:"longest", label:"Longest streets", desc:"the 10 longest streets by total length", names: byL.slice(0,10) },
-    { id:"diagonal", label:"Off-grid diagonals", desc:"streets over 1½ miles long whose average bearing is more than 12° off the grid", names: byL.filter(j=>N.sL[j]>1.5*FT_MI && devOf(j)>12).slice(0,15) },
+    { id:"diagonal", label:"Off-grid diagonals", desc:"streets over 1½ miles long whose average bearing is more than 12° off the grid", names: byL.filter(j=>isDiagonal(N,j)).slice(0,15) },
     { id:"trails", label:"Old trail diagonals", desc:"the diagonal avenues that follow old trails and plank roads", names: matchBase(N, TRAILS) },
     { id:"mile", label:"Mile-line streets", desc:"the streets on the mile grid of 800 house numbers, north–south streets west to east and then east–west streets north to south", names: geoOrder(N, matchBase(N, MILE_LINES), elig), order:"geo" },
     { id:"expy", label:"Expressways", desc:"expressways and Lake Shore Drive", names: named.filter(j=>/\b(EXPY|EXPWY|EXPRESSWAY|SKYWAY|TOLLWAY|LAKE SHORE)\b/.test(N.upper[j]) || N.nameFeat[j].some(i=>/expressway/i.test(N.classLabel(N.classes[N.clsIdx[i]])))).sort((a,b)=>N.sLall[b]-N.sLall[a]).slice(0,15),
@@ -704,6 +731,34 @@ function findIntersections(N, elig){
     out.push({ x:node.x, y:node.y, deg, names, minGap, offset, feats:[...new Set(node.edges.map(e=>e.seg))] });
   }
   return out;
+}
+
+/* ---------- Diagonal vs. grid streets: 6-way corners, dead-end-free streets, and geographic order ---------- */
+const isDiagonal = (N, j) => N.sL[j]>1.5*FT_MI && (N.sDev[j]/N.sL[j])>12;
+function streetAnalysis(N, elig, inters){
+  // Ordinary streets only, same exclusions as the shortest-streets list (ramps, levels, airport roads, etc.)
+  const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]) && !ODD_NAME.test(N.keys[j].toUpperCase()));
+  const J = named.filter(j => N.sL[j]>0);
+
+  const sixCount = new Map();
+  for (const node of inters) if (node.deg===6) for (const j of node.names) sixCount.set(j, (sixCount.get(j)||0)+1);
+  const diag = J.filter(j=>isDiagonal(N,j)).map(j => { const total=sixCount.get(j)||0; return { j, total, perMile: total/(N.sL[j]/FT_MI) }; });
+
+  const deg = nodeDegrees(N, elig);
+  const noDead = J.filter(j => N.sL[j]>FT_MI).filter(j => {
+    const ends = pieceLooseEnds(N, eligibleFeats(N,j,elig));
+    return ends.every(([x,y]) => (deg.get(Math.round(x)*1e7+Math.round(y))||0) >= 2);
+  });
+
+  // Non-diagonal (grid) streets, ordered by their official address-grid line (falls back to mean position
+  // for the rare street with no EWNS tag) rather than raw geometry, so the order matches the Near/gridLine label
+  const nonDiag = J.filter(j => !isDiagonal(N,j));
+  const geos = new Map(nonDiag.map(j => [j, streetGeo(N,j,elig)]).filter(([,g])=>g));
+  const ns = [...geos.keys()].filter(j=>geos.get(j).ns).sort((a,b)=>geos.get(b).pos-geos.get(a).pos);                // east -> west
+  const ewNorth = [...geos.keys()].filter(j=>!geos.get(j).ns && geos.get(j).pos>=0).sort((a,b)=>geos.get(a).pos-geos.get(b).pos);  // out from Madison, going north
+  const ewSouth = [...geos.keys()].filter(j=>!geos.get(j).ns && geos.get(j).pos<0).sort((a,b)=>geos.get(b).pos-geos.get(a).pos);   // out from Madison, going south
+
+  return { diag, noDead, geos, order:{ ns, ewNorth, ewSouth } };
 }
 
 /* ---------- Plain-language queries ---------- */
@@ -784,7 +839,7 @@ function toFrame(lines){
 "use strict";
 const $ = id => document.getElementById(id);
 let NET=null, LISTS=[], MASK=null, ELIG=null, STATS=null, PIN=null, filterSig="";
-let INTERS=[], INTER_ROWS=[];
+let INTERS=[], INTER_ROWS=[], ANALYSIS=null;
 const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, tool:"pan", piecesOf:null, focusPiece:-1, interMarks:[], interSegs:new Set() };
 const view = { x:0, y:0, s:0.01 };
 let colors = {};
@@ -849,6 +904,7 @@ function recompute(){
     for (let i=0;i<NET.n;i++) ELIG[i] = (!ui.classOff.has(NET.clsIdx[i]) && !ui.statusOff.has(NET.statIdx[i])) ? 1 : 0;
     nameTotals(NET, ELIG); LISTS=notableLists(NET, ELIG); renderLists();
     INTERS=findIntersections(NET, ELIG); renderIntersections();
+    ANALYSIS=streetAnalysis(NET, ELIG, INTERS); renderAnalysis();
   }
   const m=new Uint8Array(NET.n), sel=new Set(ui.sel), b=ui.box;
   for (let i=0;i<NET.n;i++){
@@ -1278,6 +1334,75 @@ function showIntersections(mode, degree){
   showIntersectionsOnMap(INTER_ROWS);
   say($("interNote").textContent);
   $("interBox").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+}
+
+/* Plain-text export: used by the diagonals/no-dead-end/street-order tables below */
+function exportTxt(filename, lines){
+  const blob = new Blob([lines.join("\n")+"\n"], {type:"text/plain"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+}
+function rowClickSelect(id){
+  $(id).onclick=e=>{ const tr=e.target.closest("tr[data-j]"); if (tr){ select([+tr.dataset.j]); runQuery(NET.names[+tr.dataset.j]); } };
+  $(id).onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbtn")) $(id).onclick(e); };
+}
+
+/* Diagonal streets ranked by how many 6-way corners they touch, in total and per mile */
+let diagSort="total";
+function diagRows(){
+  const rows = ANALYSIS.diag.slice();
+  if (diagSort==="name") rows.sort((a,b)=>byName(a.j,b.j));
+  else if (diagSort==="name-desc") rows.sort((a,b)=>byName(b.j,a.j));
+  else if (diagSort==="total-asc") rows.sort((a,b)=>a.total-b.total);
+  else if (diagSort==="permile-desc") rows.sort((a,b)=>b.perMile-a.perMile);
+  else if (diagSort==="permile-asc") rows.sort((a,b)=>a.perMile-b.perMile);
+  else rows.sort((a,b)=>b.total-a.total || b.perMile-a.perMile);
+  return rows;
+}
+function renderDiagSix(){
+  const rows = diagRows();
+  $("diagSixNote").textContent = `${rows.length} off-grid diagonal${rows.length===1?"":"s"} (over 1½ miles, more than 12° off the grid), ranked by 6-way corners touched, under the current class/status filters.`;
+  $("diagSixTable").innerHTML = `<tr>${sortTh("Street",["name","name-desc"],diagSort)}${sortTh("6-way corners",["total","total-asc"],diagSort,true)}${sortTh("Per mile",["permile-desc","permile-asc"],diagSort,true)}<th class="r">Miles</th></tr>` +
+    rows.map(r=>`<tr class="click" tabindex="0" data-j="${r.j}"><td>${esc(pretty(NET.names[r.j]))}</td><td class="r">${r.total}</td><td class="r">${fmt(r.perMile,2)}</td><td class="r">${fmt(NET.sL[r.j]/FT_MI,2)}</td></tr>`).join("");
+}
+$("diagSixTable").onclick=e=>{ if (headerClick(e, ()=>diagSort, v=>{ diagSort=v; renderDiagSix(); })) return;
+  const tr=e.target.closest("tr[data-j]"); if (tr){ select([+tr.dataset.j]); runQuery(NET.names[+tr.dataset.j]); } };
+$("diagSixTable").onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbtn")) $("diagSixTable").onclick(e); };
+$("btnExportDiagSix").onclick=()=>exportTxt("chicago-diagonals-6way.txt", [
+  "Diagonal streets by 6-way intersections - Chicago Grid Lab", "", "Street\t6-way corners\tPer mile\tMiles",
+  ...diagRows().map(r=>`${NET.names[r.j]}\t${r.total}\t${r.perMile.toFixed(2)}\t${(NET.sL[r.j]/FT_MI).toFixed(2)}`)]);
+
+/* Streets over a mile long where no piece ever simply dead-ends */
+function renderNoDead(){
+  const rows = ANALYSIS.noDead.slice().sort((a,b)=>NET.sL[b]-NET.sL[a]);
+  $("noDeadTable").innerHTML = rows.length
+    ? `<tr><th>Street</th><th class="r">Miles</th></tr>` + rows.map(j=>`<tr class="click" tabindex="0" data-j="${j}"><td>${esc(pretty(NET.names[j]))}</td><td class="r">${fmt(NET.sL[j]/FT_MI,2)}</td></tr>`).join("")
+    : `<tr><td>None under the current filters.</td></tr>`;
+}
+rowClickSelect("noDeadTable");
+$("btnExportNoDead").onclick=()=>exportTxt("chicago-streets-no-dead-end.txt", [
+  "Streets over a mile long with no true dead end - Chicago Grid Lab", "", "Street\tMiles",
+  ...ANALYSIS.noDead.slice().sort((a,b)=>NET.sL[b]-NET.sL[a]).map(j=>`${NET.names[j]}\t${(NET.sL[j]/FT_MI).toFixed(2)}`)]);
+
+/* Non-diagonal (grid) streets, geographic order */
+function renderOrderTable(id, js){
+  $(id).innerHTML = `<tr><th class="r">#</th><th>Street</th><th>Grid line</th><th class="r">Miles</th></tr>` +
+    js.map((j,k)=>`<tr class="click" tabindex="0" data-j="${j}"><td class="r">${k+1}</td><td>${esc(pretty(NET.names[j]))}</td><td>${esc(ANALYSIS.geos.get(j).gridLine)}</td><td class="r">${fmt(NET.sL[j]/FT_MI,2)}</td></tr>`).join("");
+}
+for (const id of ["orderNSTable","orderEWNTable","orderEWSTable"]) rowClickSelect(id);
+function exportOrder(filename, title, js){
+  exportTxt(filename, [title, "", "#\tStreet\tGrid line\tMiles", ...js.map((j,k)=>`${k+1}\t${NET.names[j]}\t${ANALYSIS.geos.get(j).gridLine}\t${(NET.sL[j]/FT_MI).toFixed(2)}`)]);
+}
+$("btnExportNS").onclick=()=>exportOrder("chicago-streets-ns-east-to-west.txt", "North-south streets, east to west - Chicago Grid Lab", ANALYSIS.order.ns);
+$("btnExportEWN").onclick=()=>exportOrder("chicago-streets-ew-north.txt", "East-west streets, north from Madison - Chicago Grid Lab", ANALYSIS.order.ewNorth);
+$("btnExportEWS").onclick=()=>exportOrder("chicago-streets-ew-south.txt", "East-west streets, south from Madison - Chicago Grid Lab", ANALYSIS.order.ewSouth);
+
+function renderAnalysis(){
+  if (!NET || !ANALYSIS) return;
+  renderDiagSix(); renderNoDead();
+  renderOrderTable("orderNSTable", ANALYSIS.order.ns);
+  renderOrderTable("orderEWNTable", ANALYSIS.order.ewNorth);
+  renderOrderTable("orderEWSTable", ANALYSIS.order.ewSouth);
 }
 function renderLongest(){
   const top=STATS.byName.filter(([j])=>NET.names[j]!=="(unnamed)").slice(0,15), mx=top[0]?.[1]||1;
