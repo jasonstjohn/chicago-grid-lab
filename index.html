@@ -106,7 +106,9 @@ canvas#map.selecting{cursor:crosshair}
 .sec p.note{margin:0;color:var(--muted);font-size:.88rem;max-width:62ch}
 .scope{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 .scope strong{font-weight:600}
-.figs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.figRow{display:flex;align-items:center;gap:14px}
+.figRow svg{flex-shrink:0}
+.figs{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0}
 .fig{display:grid;gap:2px;align-content:start}
 .fig .v{font-family:var(--display);font-weight:800;font-size:2.5rem;line-height:1;font-variant-numeric:tabular-nums}
 .fig .k{font-size:.8rem;color:var(--muted)}
@@ -144,6 +146,8 @@ footer a,.sec a{color:var(--blue)}
   .work{grid-template-columns:minmax(0,1fr)}
   .mapwrap{position:relative;height:64vh;border-right:0;border-bottom:1px solid var(--rule)}
   .figs .v{font-size:2rem}
+  .figRow{gap:8px}
+  .figRow svg{width:52px;height:52px}
   .topo div{grid-template-columns:110px minmax(0,1fr) 80px}
   .source{margin-left:0}
 }
@@ -243,18 +247,16 @@ footer a,.sec a{color:var(--blue)}
         </div>
       </div>
       <div id="classChips" style="display:grid;gap:6px"></div>
-      <div class="figs">
-        <div class="fig"><span class="v" id="fPhi">–</span><span class="k">Grid order φ</span><span class="p" id="pPhi"></span></div>
-        <div class="fig"><span class="v" id="fH">–</span><span class="k">Orientation entropy</span><span class="p" id="pH"></span></div>
-        <div class="fig"><span class="v" id="fCard">–</span><span class="k">Length within 2° of N·S·E·W</span><span class="p" id="pCard"></span></div>
+      <div class="figRow">
+        <svg id="rose" viewBox="0 0 300 300" width="76" height="76" role="img" aria-label="Orientation rose"></svg>
+        <div class="figs">
+          <div class="fig"><span class="v" id="fPhi">–</span><span class="k">Grid order φ</span><span class="p" id="pPhi"></span></div>
+          <div class="fig"><span class="v" id="fH">–</span><span class="k">Orientation entropy</span><span class="p" id="pH"></span></div>
+          <div class="fig"><span class="v" id="fCard">–</span><span class="k">Length within 2° of N·S·E·W</span><span class="p" id="pCard"></span></div>
+        </div>
       </div>
       <div class="scale" aria-hidden="true"><div class="track"></div><div class="m pin" id="mPin" hidden></div><div class="m" id="mPhi"></div><div class="ends"><span>0 · no order</span><span>1 · perfect grid</span></div></div>
       <p class="note">φ rescales entropy so that a perfect four-way grid scores 1 and streets pointing every which way score 0 (Boeing 2019). Entropy runs from 1.386 for a perfect grid to 3.584 for uniform bearings.</p>
-    </section>
-
-    <section class="sec">
-      <h2>Which way the streets run</h2>
-      <div class="charts"><svg id="rose" viewBox="0 0 300 300" width="300" height="300" role="img" aria-label="Orientation rose"></svg></div>
       <p class="note" id="roseNote"></p>
     </section>
 
