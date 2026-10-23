@@ -281,6 +281,13 @@ footer a,.sec a{color:var(--blue)}
             <option value="offset">Most offset / staggered</option>
             <option value="names">Most named streets converging</option>
           </select>
+          <select id="interDeg" class="btn small">
+            <option value="0">Weirdest (5-way+)</option>
+            <option value="5">Exactly 5-way</option>
+            <option value="6">Exactly 6-way</option>
+            <option value="7">Exactly 7-way</option>
+            <option value="8">8-way or more</option>
+          </select>
         </div>
         <div class="tablewrap"><table id="interTable"></table></div>
         <p class="note" id="interNote"></p>
@@ -462,6 +469,48 @@ function pieceGroups(N, feats){
 }
 const eligibleFeats = (N, j, elig) => N.nameFeat[j].filter(i => elig[i]);
 function piecesCount(N, j, elig){ const f=eligibleFeats(N,j,elig); return f.length ? pieceGroups(N,f).length : 0; }
+
+/* Degree of every node in the whole (filtered) network, keyed the same way as findIntersections */
+function nodeDegrees(N, elig){
+  const deg = new Map();
+  for (let i=0;i<N.n;i++){ if (!elig[i]) continue;
+    for (const e of [0,2]){ const k = Math.round(N.ep[i*4+e])*1e7 + Math.round(N.ep[i*4+e+1]); deg.set(k, (deg.get(k)||0)+1); } }
+  return deg;
+}
+/* The loose ends of one piece: endpoints that don't exactly meet another segment of the same piece */
+function pieceLooseEnds(N, feats){
+  const local = new Map();
+  for (const f of feats) for (const e of [0,2]){ const k = Math.round(N.ep[f*4+e])*1e7 + Math.round(N.ep[f*4+e+1]); local.set(k, (local.get(k)||0)+1); }
+  const pts = new Map();
+  for (const f of feats) for (const e of [0,2]){
+    const x=N.ep[f*4+e], y=N.ep[f*4+e+1], k = Math.round(x)*1e7 + Math.round(y);
+    if (local.get(k)===1) pts.set(k, [x,y]);
+  }
+  return [...pts.values()];
+}
+/* How many of a street's gaps (pieces more than GAP_FT apart) land somewhere that isn't just a dead
+   end - i.e. another street still passes through, so the street was interrupted rather than petering out. */
+function nonDeadEndInterruptions(N, j, elig, deg){
+  const feats = eligibleFeats(N, j, elig); if (feats.length<2) return 0;
+  const groups = pieceGroups(N, feats); if (groups.length<2) return 0;
+  const pieces = groups.map(fs => pieceLooseEnds(N, fs)).filter(ends => ends.length);
+  if (pieces.length<2) return 0;
+  const mid = ends => ends.reduce((a,p)=>[a[0]+p[0]/ends.length,a[1]+p[1]/ends.length],[0,0]);
+  const all = feats.reduce((b,f)=>[Math.min(b[0],N.bb[f*4]),Math.min(b[1],N.bb[f*4+1]),Math.max(b[2],N.bb[f*4+2]),Math.max(b[3],N.bb[f*4+3])],[Infinity,Infinity,-Infinity,-Infinity]);
+  const ew = (all[2]-all[0]) >= (all[3]-all[1]);
+  pieces.forEach(p => p.c = mid(p));
+  pieces.sort((a,b) => ew ? a.c[0]-b.c[0] : b.c[1]-a.c[1]);
+  let count=0;
+  for (let i=0;i<pieces.length-1;i++){
+    const a=pieces[i], b=pieces[i+1];
+    let best=Infinity, pa=null, pb=null;
+    for (const p of a) for (const q of b){ const d=Math.hypot(p[0]-q[0],p[1]-q[1]); if (d<best){ best=d; pa=p; pb=q; } }
+    if (!pa) continue;
+    const ka = Math.round(pa[0])*1e7+Math.round(pa[1]), kb = Math.round(pb[0])*1e7+Math.round(pb[1]);
+    if ((deg.get(ka)||0)>=2 || (deg.get(kb)||0)>=2) count++;
+  }
+  return count;
+}
 function streetPieces(N, j, elig){
   const feats = eligibleFeats(N, j, elig); if (!feats.length) return null;
   const pieces = pieceGroups(N, feats).map(fs => {
@@ -608,9 +657,14 @@ function notableLists(N, elig){
     { id:"crooked", label:"Most crooked", desc:"streets over a mile long with the lowest straightness index", names: J.filter(j=>N.sL[j]>FT_MI).sort((a,b)=>N.sC[a]/N.sL[a]-N.sC[b]/N.sL[b]).slice(0,10) },
   ];
   // Most broken-up: count pieces for streets longer than ¼ mile (cheap enough to do for all)
-  const frag = J.filter(j=>N.sL[j]>FT_MI/4 && N.sN[j]>2).map(j=>[j, piecesCount(N,j,elig)]).filter(x=>x[1]>1).sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
+  const brokenCand = J.filter(j=>N.sL[j]>FT_MI/4 && N.sN[j]>2).map(j=>[j, piecesCount(N,j,elig)]).filter(x=>x[1]>1);
+  const frag = brokenCand.slice().sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
   if (N.shortest.length) lists.push({ id:"shortest", label:"Shortest streets", desc:"the shortest ordinary streets, measured end to end", names:[], short:true });
-  lists.push({ id:"broken", label:"Most broken up", desc:`streets that come in the most separate pieces (gaps over ${GAP_FT} ft)`, names: frag.map(x=>x[0]), extra: new Map(frag) });
+  lists.push({ id:"broken", label:"Most broken up", desc:`streets that come in the most separate pieces (gaps over ${GAP_FT} ft)`, names: frag.map(x=>x[0]), extra: new Map(frag), extraUnit:"pieces" });
+  // Of the broken-up streets, which gaps aren't just dead ends - something else still connects there
+  const deg = nodeDegrees(N, elig);
+  const nonDead = brokenCand.map(([j])=>[j, nonDeadEndInterruptions(N,j,elig,deg)]).filter(x=>x[1]>0).sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
+  lists.push({ id:"interrupted", label:"Most interrupted (not dead ends)", desc:"streets broken into pieces where the break isn't just a dead end - another street still passes through", names: nonDead.map(x=>x[0]), extra: new Map(nonDead), extraUnit:"non-dead-end breaks" });
   return lists.filter(l=>l.names.length || l.short);
 }
 
@@ -682,10 +736,13 @@ function parseQuery(N, lists, text){
     [/offset|stagger|don.t line up|doesn.t line up|not line up|don.t align|out of line/,"offset"],
     [/converg|named streets meet|most names|many names/,"names"],
   ];
-  for (const [re,mode] of interModes) if (re.test(t)) return { kind:"intersections", mode };
-  if (/intersection|corner/.test(t) && /weird|strange|odd|crazy|confusing|unusual|wild|funky|notable/.test(t)) return { kind:"intersections", mode:"multiway" };
+  const WORDNUM = {five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  function wayDegree(s){ const m = s.match(/(\d+|five|six|seven|eight|nine|ten)[\s-]?way/); return m ? (WORDNUM[m[1]] || +m[1]) : 0; }
+  for (const [re,mode] of interModes) if (re.test(t))
+    return mode==="multiway" ? { kind:"intersections", mode, degree: wayDegree(t) } : { kind:"intersections", mode };
+  if (/intersection|corner/.test(t) && /weird|strange|odd|crazy|confusing|unusual|wild|funky|notable/.test(t)) return { kind:"intersections", mode:"multiway", degree:0 };
   const L = id => lists.find(l=>l.id===id);
-  const rules = [[/shortest|short/,"shortest"],[/broken|fragment|pieces|gaps/,"broken"],[/trail|plank|indian/,"trails"],[/diagonal|off.?grid|angle/,"diagonal"],[/crooked|curv|wigg|wind|jog/,"crooked"],[/expressway|highway|freeway|expy/,"expy"],[/boulevard|blvd/,"blvd"],[/mile|section line/,"mile"],[/longest|long/,"longest"]];
+  const rules = [[/shortest|short/,"shortest"],[/non[\s-]?dead[\s-]?end|not\s+(a\s+)?dead[\s-]?end/,"interrupted"],[/broken|fragment|pieces|gaps|interrupt/,"broken"],[/trail|plank|indian/,"trails"],[/diagonal|off.?grid|angle/,"diagonal"],[/crooked|curv|wigg|wind|jog/,"crooked"],[/expressway|highway|freeway|expy/,"expy"],[/boulevard|blvd/,"blvd"],[/mile|section line/,"mile"],[/longest|long/,"longest"]];
   for (const [re,id] of rules) if (re.test(t) && L(id)) return { kind:"list", list:L(id) };
   return { kind:"miss" };
 }
@@ -977,7 +1034,7 @@ function showList(l){
   let note="";
   if (l.enable && l.enable.some(k=>ui.classOff.has(k))){ l.enable.forEach(k=>ui.classOff.delete(k)); note=" Expressway and ramp classes are now switched on."; }
   select(l.names);
-  say(`Showing ${esc(l.desc)}: ${l.names.slice(0,6).map(j=>`<strong>${esc(pretty(NET.names[j]))}</strong>${l.extra?` (${l.extra.get(j)} pieces)`:""}`).join(", ")}${l.names.length>6?`, and ${l.names.length-6} more`:""}.${note}`);
+  say(`Showing ${esc(l.desc)}: ${l.names.slice(0,6).map(j=>`<strong>${esc(pretty(NET.names[j]))}</strong>${l.extra?` (${l.extra.get(j)} ${l.extraUnit||"pieces"})`:""}`).join(", ")}${l.names.length>6?`, and ${l.names.length-6} more`:""}.${note}`);
 }
 /* Sortable column headers: click to sort, click again to reverse */
 const byName = (a,b) => NET.names[a].localeCompare(NET.names[b], undefined, {numeric:true});
@@ -1031,7 +1088,7 @@ function runQuery(text){
   const r=parseQuery(NET, LISTS, text);
   if (r.kind==="whole"){ $("btnWhole").click(); return; }
   if (r.kind==="list"){ showList(r.list); return; }
-  if (r.kind==="intersections"){ showIntersections(r.mode); return; }
+  if (r.kind==="intersections"){ showIntersections(r.mode, r.degree); return; }
   if (r.kind==="streets"){
     select(r.names);
     if (r.names.length===1 && !ui.piecesOf){ say(`<strong>${esc(pretty(NET.names[r.names[0]]))}</strong> is hidden by the class/status filters below. Switch them on to see it.`); return; }
@@ -1159,32 +1216,42 @@ function renderTopo(){
   $("topo").innerHTML = labels.map((l,k)=>`<div><span>${l}</span><span class="track"><span class="${cls[k]}" style="width:${S.deg[k]/mx*100}%"></span></span><span class="num" style="text-align:right">${fmt(S.deg[k])}${PIN?` <small style="color:var(--muted)">/ ${fmt(PIN.s.deg[k])}</small>`:""}</span></div>`).join("")
     + `<div><span>4-way share of intersections</span><span></span><span class="num" style="text-align:right">${fmt(S.fourShare*100,1)}%</span></div><div><span>Mean node degree</span><span></span><span class="num" style="text-align:right">${fmt(S.meanDeg,3)}</span></div>`;
 }
-/* Weirdest intersections: one table, four ranking modes over the same node data */
+/* Weirdest intersections: one table, four ranking modes over the same node data.
+   "multiway" doubles as an exact-degree browser (the interDeg select) so "show all the 6-way
+   intersections" can list every one of them, unfiltered and uncapped, not just the top 20. */
 const INTER_MODES = {
-  multiway: { label:"streets meeting", filter:x=>x.deg>=5 && x.names.length>=3, sort:(a,b)=>b.deg-a.deg||b.names.length-a.names.length, value:x=>`${x.deg}-way` },
-  acute:    { label:"sharpest angle", filter:x=>x.names.length>=2 && x.minGap>=5 && x.minGap<40, sort:(a,b)=>a.minGap-b.minGap, value:x=>`${fmt(x.minGap)}°` },
-  offset:   { label:"most offset", filter:x=>x.offset!==null && x.names.length>=2, sort:(a,b)=>b.offset-a.offset, value:x=>`${fmt(x.offset)}° off` },
-  names:    { label:"named streets converging", filter:x=>x.names.length>=3, sort:(a,b)=>b.names.length-a.names.length||b.deg-a.deg, value:x=>`${x.names.length} streets` },
+  multiway: { label:"streets meeting", value:x=>`${x.deg}-way`,
+    rows:deg => deg>0
+      ? INTERS.filter(x=>(deg>=8 ? x.deg>=8 : x.deg===deg) && x.names.length>=2).sort((a,b)=>b.deg-a.deg||b.names.length-a.names.length)
+      : INTERS.filter(x=>x.deg>=5 && x.names.length>=3).sort((a,b)=>b.deg-a.deg||b.names.length-a.names.length).slice(0,20) },
+  acute:    { label:"sharpest angle", value:x=>`${fmt(x.minGap)}°`,
+    rows:()=> INTERS.filter(x=>x.names.length>=2 && x.minGap>=5 && x.minGap<40).sort((a,b)=>a.minGap-b.minGap).slice(0,20) },
+  offset:   { label:"most offset", value:x=>`${fmt(x.offset)}° off`,
+    rows:()=> INTERS.filter(x=>x.offset!==null && x.names.length>=2).sort((a,b)=>b.offset-a.offset).slice(0,20) },
+  names:    { label:"named streets converging", value:x=>`${x.names.length} streets`,
+    rows:()=> INTERS.filter(x=>x.names.length>=3).sort((a,b)=>b.names.length-a.names.length||b.deg-a.deg).slice(0,20) },
 };
-function interRows(mode){ return INTERS.filter(INTER_MODES[mode].filter).sort(INTER_MODES[mode].sort).slice(0,20); }
 function renderIntersections(){
   if (!NET) return;
-  const mode=$("interMode").value, M=INTER_MODES[mode];
-  INTER_ROWS = interRows(mode);
-  $("interNote").textContent = INTER_ROWS.length ? `Top ${INTER_ROWS.length} by ${M.label}, under the current class/status filters. Click a row to see it on the map.`
-    : `No intersections match "${M.label}" under the current class/status filters.`;
+  const mode=$("interMode").value, M=INTER_MODES[mode], deg=+$("interDeg").value;
+  $("interDeg").hidden = mode!=="multiway";
+  INTER_ROWS = mode==="multiway" ? M.rows(deg) : M.rows();
+  const scope = mode==="multiway" && deg ? `exactly ${deg>=8?"8+":deg}-way` : M.label;
+  $("interNote").textContent = INTER_ROWS.length ? `${mode==="multiway"&&deg?"All":"Top"} ${INTER_ROWS.length} by ${scope}, under the current class/status filters. Click a row to see it on the map.`
+    : `No intersections match "${scope}" under the current class/status filters.`;
   $("interTable").innerHTML = `<tr><th class="r">#</th><th>Streets</th><th class="r">${esc(M.label)}</th><th>Near</th></tr>` +
     INTER_ROWS.map((r,k)=>`<tr class="click" tabindex="0" data-k="${k}"><td class="r">${k+1}</td><td>${r.names.slice(0,4).map(j=>esc(pretty(NET.names[j]))).join(" / ")}${r.names.length>4?" …":""}</td><td class="r">${M.value(r)}</td><td class="num" style="font-size:.8rem;color:var(--muted)">${NET.meta.anchored?`${addrX(r.x)} · ${addrY(r.y)}`:""}</td></tr>`).join("");
 }
 $("interMode").onchange=renderIntersections;
+$("interDeg").onchange=renderIntersections;
 function focusIntersection(r){
   select(r.names); const pad=300; fit([r.x-pad,r.y-pad,r.x+pad,r.y+pad],0.3);
   say(`<strong>${r.names.slice(0,4).map(j=>esc(pretty(NET.names[j]))).join(" / ")}</strong> meet here, ${r.deg}-way${NET.meta.anchored?`, near ${addrX(r.x)} · ${addrY(r.y)}`:""}.`);
 }
 $("interTable").onclick=e=>{ const tr=e.target.closest("tr[data-k]"); if (tr) focusIntersection(INTER_ROWS[+tr.dataset.k]); };
 $("interTable").onkeydown=e=>{ if (e.key==="Enter") $("interTable").onclick(e); };
-function showIntersections(mode){
-  $("interMode").value = mode; renderIntersections();
+function showIntersections(mode, degree){
+  $("interMode").value = mode; $("interDeg").value = degree || 0; renderIntersections();
   if (INTER_ROWS.length) focusIntersection(INTER_ROWS[0]);
   $("interBox").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
 }
