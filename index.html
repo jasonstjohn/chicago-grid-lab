@@ -106,6 +106,13 @@ canvas#map.selecting{cursor:crosshair}
 .sec p.note{margin:0;color:var(--muted);font-size:.88rem;max-width:62ch}
 .scope{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 .scope strong{font-weight:600}
+.sec details{display:grid;gap:12px}
+.sec details>summary{cursor:pointer;list-style:none}
+.sec details>summary::-webkit-details-marker{display:none}
+.sec details>summary::before{content:"▸";display:inline-block;width:1em;color:var(--muted);transition:transform .15s}
+.sec details[open]>summary::before{transform:rotate(90deg)}
+.sec details>summary h3{display:inline}
+#btnTop{position:fixed;right:18px;bottom:18px;z-index:40;border-radius:999px;box-shadow:0 6px 20px rgb(0 0 0 / .18)}
 .figRow{display:flex;align-items:center;gap:14px}
 .figRow svg{flex-shrink:0}
 .figs{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0}
@@ -272,54 +279,63 @@ footer a,.sec a{color:var(--blue)}
       <h2>Intersections</h2>
       <div class="topo" id="topo"></div>
       <p class="note">Nodes come from segment endpoints snapped to 1 ft, as in <code>chicago_streets_stats.py</code>. A degree-2 node is where one segment hands off to the next. Area selections cut segments at the edge, which shows up as extra dead ends.</p>
-      <div id="interBox">
-        <div class="scope">
-          <h3>Weirdest intersections</h3>
-          <select id="interMode" class="btn small">
-            <option value="multiway">Most streets meeting</option>
-            <option value="acute">Sharpest angle (slivers)</option>
-            <option value="offset">Most offset / staggered</option>
-            <option value="names">Most named streets converging</option>
-          </select>
-          <select id="interDeg" class="btn small">
-            <option value="0">Weirdest (5-way+)</option>
-            <option value="5">Exactly 5-way</option>
-            <option value="6">Exactly 6-way</option>
-            <option value="7">Exactly 7-way</option>
-            <option value="8">8-way or more</option>
-          </select>
-          <button class="btn small" id="btnInterMap" type="button">Show these on the map</button>
+      <details id="interDetails">
+        <summary><h3>Weirdest intersections</h3></summary>
+        <div id="interBox">
+          <div class="scope">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <select id="interMode" class="btn small">
+                <option value="multiway">Most streets meeting</option>
+                <option value="acute">Sharpest angle (slivers)</option>
+                <option value="offset">Most offset / staggered</option>
+                <option value="names">Most named streets converging</option>
+              </select>
+              <select id="interDeg" class="btn small">
+                <option value="0">Weirdest (5-way+)</option>
+                <option value="5">Exactly 5-way</option>
+                <option value="6">Exactly 6-way</option>
+                <option value="7">Exactly 7-way</option>
+                <option value="8">8-way or more</option>
+              </select>
+            </div>
+            <button class="btn small" id="btnInterMap" type="button">Show these on the map</button>
+          </div>
+          <div class="tablewrap"><table id="interTable"></table></div>
+          <p class="note" id="interNote"></p>
         </div>
-        <div class="tablewrap"><table id="interTable"></table></div>
-        <p class="note" id="interNote"></p>
-      </div>
-      <div>
-        <div class="scope">
-          <h3>Diagonals by 6-way corners</h3>
-          <button class="btn small" id="btnExportDiagSix" type="button">Export .txt</button>
-        </div>
+      </details>
+      <details>
+        <summary><h3>Diagonals by 6-way corners</h3></summary>
+        <div class="scope"><span></span><button class="btn small" id="btnExportDiagSix" type="button">Export .txt</button></div>
         <div class="tablewrap"><table id="diagSixTable"></table></div>
         <p class="note" id="diagSixNote"></p>
-      </div>
-      <div>
-        <div class="scope">
-          <h3>Streets without a dead end</h3>
-          <button class="btn small" id="btnExportNoDead" type="button">Export .txt</button>
-        </div>
+      </details>
+      <details>
+        <summary><h3>Streets without a dead end</h3></summary>
+        <div class="scope"><span></span><button class="btn small" id="btnExportNoDead" type="button">Export .txt</button></div>
         <div class="tablewrap"><table id="noDeadTable"></table></div>
         <p class="note" id="noDeadNote">Streets over a mile long (under the current class/status filters) where every piece's loose end still touches another street - it never simply stops.</p>
-      </div>
+      </details>
     </section>
 
     <section class="sec" id="orderSec">
       <h2>Street order</h2>
       <p class="note">The grid streets (everything outside the off-grid-diagonals list above), in the order you'd cross them.</p>
-      <div class="scope"><h3>North–south, east to west</h3><button class="btn small" id="btnExportNS" type="button">Export .txt</button></div>
-      <div class="tablewrap"><table id="orderNSTable"></table></div>
-      <div class="scope"><h3>East–west, north from Madison</h3><button class="btn small" id="btnExportEWN" type="button">Export .txt</button></div>
-      <div class="tablewrap"><table id="orderEWNTable"></table></div>
-      <div class="scope"><h3>East–west, south from Madison</h3><button class="btn small" id="btnExportEWS" type="button">Export .txt</button></div>
-      <div class="tablewrap"><table id="orderEWSTable"></table></div>
+      <details>
+        <summary><h3>North–south, east to west</h3></summary>
+        <div class="scope"><span></span><button class="btn small" id="btnExportNS" type="button">Export .txt</button></div>
+        <div class="tablewrap"><table id="orderNSTable"></table></div>
+      </details>
+      <details>
+        <summary><h3>East–west, north from Madison</h3></summary>
+        <div class="scope"><span></span><button class="btn small" id="btnExportEWN" type="button">Export .txt</button></div>
+        <div class="tablewrap"><table id="orderEWNTable"></table></div>
+      </details>
+      <details>
+        <summary><h3>East–west, south from Madison</h3></summary>
+        <div class="scope"><span></span><button class="btn small" id="btnExportEWS" type="button">Export .txt</button></div>
+        <div class="tablewrap"><table id="orderEWSTable"></table></div>
+      </details>
     </section>
 
     <section class="sec" id="shortSec">
@@ -352,6 +368,8 @@ footer a,.sec a{color:var(--blue)}
   <div><strong>Method.</strong> Same measures as <code>chicago_streets_stats.py</code>. Coordinates are projected to feet around State &amp; Madison, the zero point of Chicago's address grid, so the readout shows approximate addresses. Bearings from latitude/longitude data use true north; shapefiles in Illinois State Plane use grid north, about 0.45° different.</div>
   <div id="footSrc"></div>
 </footer>
+
+<button class="btn" id="btnTop" type="button" hidden>↑ Top</button>
 
 <!-- ================= Core: data, geometry and statistics (no DOM) ================= -->
 <script>
@@ -1333,6 +1351,7 @@ function showIntersections(mode, degree){
   $("interMode").value = mode; $("interDeg").value = degree || 0; renderIntersections();
   showIntersectionsOnMap(INTER_ROWS);
   say($("interNote").textContent);
+  $("interDetails").open = true;
   $("interBox").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
 }
 
@@ -1467,6 +1486,10 @@ $("btnCopy").onclick=async()=>{
   try { await navigator.clipboard.writeText(txt); $("btnCopy").textContent="Copied"; } catch { say(`<code style="white-space:pre-wrap">${esc(txt)}</code>`); }
   setTimeout(()=>$("btnCopy").textContent="Copy numbers",1500);
 };
+
+/* Floating "back to top", shown once the page has scrolled a bit */
+addEventListener("scroll", () => { $("btnTop").hidden = scrollY < 400; }, {passive:true});
+$("btnTop").onclick = () => scrollTo({top:0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
 
 /* Start: load the site's copy of Street Center Lines */
 requestAnimationFrame(()=>{ resize(); loadData(); });
