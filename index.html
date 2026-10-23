@@ -288,6 +288,7 @@ footer a,.sec a{color:var(--blue)}
             <option value="7">Exactly 7-way</option>
             <option value="8">8-way or more</option>
           </select>
+          <button class="btn small" id="btnInterMap" type="button">Show these on the map</button>
         </div>
         <div class="tablewrap"><table id="interTable"></table></div>
         <p class="note" id="interNote"></p>
@@ -684,7 +685,7 @@ function findIntersections(N, elig){
       if (!dx && !dy) continue;
       const k = Math.round(ex)*1e7 + Math.round(ey);
       let node = nodes.get(k); if (!node){ node={x:ex,y:ey,edges:[]}; nodes.set(k,node); }
-      node.edges.push({ name, ang: Math.atan2(dy,dx)*180/Math.PI });
+      node.edges.push({ name, seg:i, ang: Math.atan2(dy,dx)*180/Math.PI });
     }
   }
   const out=[];
@@ -700,7 +701,7 @@ function findIntersections(N, elig){
       const dev=(a,b)=>Math.abs(180-angDiff(e[a].ang,e[b].ang));
       offset = Math.min(...pairings.map(([[a,b],[c,d]])=>Math.max(dev(a,b),dev(c,d))));
     }
-    out.push({ x:node.x, y:node.y, deg, names, minGap, offset });
+    out.push({ x:node.x, y:node.y, deg, names, minGap, offset, feats:[...new Set(node.edges.map(e=>e.seg))] });
   }
   return out;
 }
@@ -784,7 +785,7 @@ function toFrame(lines){
 const $ = id => document.getElementById(id);
 let NET=null, LISTS=[], MASK=null, ELIG=null, STATS=null, PIN=null, filterSig="";
 let INTERS=[], INTER_ROWS=[];
-const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, tool:"pan", piecesOf:null, focusPiece:-1 };
+const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, tool:"pan", piecesOf:null, focusPiece:-1, interMarks:[], interSegs:new Set() };
 const view = { x:0, y:0, s:0.01 };
 let colors = {};
 
@@ -919,6 +920,17 @@ function draw(){
       ctx.beginPath(); ctx.arc(sx((b[0]+b[2])/2), sy((b[1]+b[3])/2), 8, 0, 7); ctx.strokeStyle=selColor(k); ctx.stroke(); });
   }
   if (ui.dead && STATS){ ctx.fillStyle=colors.red; const r=Math.max(1.5,Math.min(3.5,view.s*40)); ctx.beginPath(); for (const [x,y] of STATS.dead){ const X=sx(x),Y=sy(y); if (X<-5||X>W+5||Y<-5||Y>H+5) continue; ctx.moveTo(X+r,Y); ctx.arc(X,Y,r,0,7); } ctx.fill(); }
+  // Intersection-list overview: the nearest segment of each street at each marked corner, plus a dot on the corner.
+  // Amber rather than the grid-alignment blue/red so it reads as a highlight, not another alignment category.
+  const markColor = colors.cat[3];
+  if (ui.interSegs.size) strokeSet(ui.interSegs, markColor, Math.max(2.4, zoomW*2));
+  if (ui.interMarks.length){
+    const r=Math.max(4,Math.min(7,view.s*80));
+    ctx.fillStyle=markColor; ctx.beginPath();
+    for (const [x,y] of ui.interMarks){ const X=sx(x),Y=sy(y); if (X<-10||X>W+10||Y<-10||Y>H+10) continue; ctx.moveTo(X+r,Y); ctx.arc(X,Y,r,0,7); } ctx.fill();
+    ctx.strokeStyle=colors.panel; ctx.lineWidth=1.6; ctx.beginPath();
+    for (const [x,y] of ui.interMarks){ const X=sx(x),Y=sy(y); if (X<-10||X>W+10||Y<-10||Y>H+10) continue; ctx.moveTo(X+r,Y); ctx.arc(X,Y,r,0,7); } ctx.stroke();
+  }
   // Piece numbers for a single selected street
   if (ui.piecesOf && ui.piecesOf.pieces.length>1){
     ui.piecesOf.pieces.forEach((p,k)=>{ const f=p.label, X=sx((NET.ep[f*4]+NET.ep[f*4+2])/2), Y=sy((NET.ep[f*4+1]+NET.ep[f*4+3])/2);
@@ -1013,7 +1025,7 @@ function selectionBounds(){
   return b;
 }
 function select(js, {fitTo=true}={}){
-  ui.sel=[...new Set(js)]; ui.focusPiece=-1; $("ident").hidden=true;
+  ui.sel=[...new Set(js)]; ui.focusPiece=-1; ui.interMarks=[]; ui.interSegs=new Set(); $("ident").hidden=true;
   recompute(); if (fitTo) fit(selectionBounds()||NET.bounds);
 }
 function renderSel(){
@@ -1250,9 +1262,21 @@ function focusIntersection(r){
 }
 $("interTable").onclick=e=>{ const tr=e.target.closest("tr[data-k]"); if (tr) focusIntersection(INTER_ROWS[+tr.dataset.k]); };
 $("interTable").onkeydown=e=>{ if (e.key==="Enter") $("interTable").onclick(e); };
+/* Show every row at once: a dot on each corner, the touching segments highlighted, zoomed to fit them all */
+function showIntersectionsOnMap(rows){
+  select([], {fitTo:false});
+  ui.interMarks = rows.map(r=>[r.x,r.y]);
+  ui.interSegs = new Set(rows.flatMap(r=>r.feats));
+  if (!rows.length){ draw(); return; }
+  const b=[Infinity,Infinity,-Infinity,-Infinity];
+  for (const r of rows){ b[0]=Math.min(b[0],r.x); b[1]=Math.min(b[1],r.y); b[2]=Math.max(b[2],r.x); b[3]=Math.max(b[3],r.y); }
+  fit(b, 0.12);
+}
+$("btnInterMap").onclick=()=>showIntersectionsOnMap(INTER_ROWS);
 function showIntersections(mode, degree){
   $("interMode").value = mode; $("interDeg").value = degree || 0; renderIntersections();
-  if (INTER_ROWS.length) focusIntersection(INTER_ROWS[0]);
+  showIntersectionsOnMap(INTER_ROWS);
+  say($("interNote").textContent);
   $("interBox").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
 }
 function renderLongest(){
