@@ -676,12 +676,16 @@ function parseQuery(N, lists, text){
   if (/^(whole|all|everything|reset|clear)\b|whole (grid|city)|all streets/.test(t)) return { kind:"whole" };
   const streets = findStreets(N, text);
   if (streets.length) return { kind:"streets", names:streets, pieces: /part|piece|fragment|broken|section|gap|split/.test(t) };
-  const interModes = [[/multi-?way|five-?way|six-?way|seven-?way|\d\s*-?way|most streets meet/,"multiway"],
-    [/acute|sliver|sharp angle|narrow angle/,"acute"], [/offset|stagger/,"offset"], [/converg|named streets meet/,"names"]];
+  const interModes = [
+    [/multi-?way|\d+[\s-]?way|five[\s-]?way|six[\s-]?way|seven[\s-]?way|eight[\s-]?way|streets meet|most streets|six corners?/,"multiway"],
+    [/acute|sliver|(sharp|narrow|shallow|tight)\w*\s*angle/,"acute"],
+    [/offset|stagger|don.t line up|doesn.t line up|not line up|don.t align|out of line/,"offset"],
+    [/converg|named streets meet|most names|many names/,"names"],
+  ];
   for (const [re,mode] of interModes) if (re.test(t)) return { kind:"intersections", mode };
-  if (/intersection|corner/.test(t) && /weird|strange|odd/.test(t)) return { kind:"intersections", mode:"multiway" };
+  if (/intersection|corner/.test(t) && /weird|strange|odd|crazy|confusing|unusual|wild|funky|notable/.test(t)) return { kind:"intersections", mode:"multiway" };
   const L = id => lists.find(l=>l.id===id);
-  const rules = [[/shortest|short/,"shortest"],[/broken|fragment|pieces|gaps/,"broken"],[/trail|plank|indian/,"trails"],[/diagonal|off.?grid|angle/,"diagonal"],[/crooked|curv|wigg|wind/,"crooked"],[/expressway|highway|freeway|expy/,"expy"],[/boulevard|blvd/,"blvd"],[/mile|section line/,"mile"],[/longest|long/,"longest"]];
+  const rules = [[/shortest|short/,"shortest"],[/broken|fragment|pieces|gaps/,"broken"],[/trail|plank|indian/,"trails"],[/diagonal|off.?grid|angle/,"diagonal"],[/crooked|curv|wigg|wind|jog/,"crooked"],[/expressway|highway|freeway|expy/,"expy"],[/boulevard|blvd/,"blvd"],[/mile|section line/,"mile"],[/longest|long/,"longest"]];
   for (const [re,id] of rules) if (re.test(t) && L(id)) return { kind:"list", list:L(id) };
   return { kind:"miss" };
 }
