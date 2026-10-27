@@ -304,7 +304,7 @@ footer a,.sec a{color:var(--blue)}
           <p class="note" id="interNote"></p>
         </div>
       </details>
-      <details>
+      <details id="diagSixDetails">
         <summary><h3>Diagonals by 6-way corners</h3></summary>
         <div class="scope"><span></span><button class="btn small" id="btnExportDiagSix" type="button">Export .txt</button></div>
         <div class="tablewrap"><table id="diagSixTable"></table></div>
@@ -335,6 +335,15 @@ footer a,.sec a{color:var(--blue)}
         <summary><h3>East–west, south from Madison</h3></summary>
         <div class="scope"><span></span><button class="btn small" id="btnExportEWS" type="button">Export .txt</button></div>
         <div class="tablewrap"><table id="orderEWSTable"></table></div>
+      </details>
+    </section>
+
+    <section class="sec" id="azSec">
+      <h2>All streets</h2>
+      <details id="azDetails">
+        <summary><h3>Alphabetical</h3></summary>
+        <div class="scope"><span></span><button class="btn small" id="btnExportAZ" type="button">Export .txt</button></div>
+        <div class="tablewrap"><table id="azTable"></table></div>
       </details>
     </section>
 
@@ -688,6 +697,44 @@ function geoCompare(a, b){
 }
 function geoOrder(N, js, elig){ const g=new Map(js.map(j=>[j,streetGeo(N,j,elig)])); return js.slice().sort((a,b)=>geoCompare(g.get(a),g.get(b))); }
 function matchBase(N, keys){ const set=new Set(keys); const out=[]; N.baseNames.forEach((b,j)=>{ if (set.has(b) && !/ PL$/i.test(N.keys[j]) && N.sL[j]>FT_MI*0.5) out.push(j); }); return out.sort((a,b)=>N.sL[b]-N.sL[a]); }
+/* Side-jogs: a sharp turn, a short run (under 260 ft - about a block), then a sharp turn back to roughly
+   the original heading. Distinct from "crooked" (an overall low straightness index, ie gradual curving) -
+   a jog is a street that's dead straight except for a few abrupt lateral steps. Checked two ways, since the
+   city's data sometimes draws a jog as wiggles inside one LineString and sometimes splits it into its own
+   short segment at the jog: (1) walk each feature's own vertex chain, and (2) for each short segment, look
+   at whatever single same-street segment attaches at each end. */
+const JOG_MAX_FT = 260, JOG_TURN_MIN = 35, JOG_NET_MAX = 20;
+function countJogs(N, feats){
+  let jogs=0;
+  const nodeKey=(x,y)=>Math.round(x)*1e7+Math.round(y);
+  const byNode=new Map(), chord=new Map();
+  for (const i of feats){
+    const edges=[];
+    for (let v=N.off[i]; v<N.off[i+1]-1; v++){
+      const dx=N.xy[(v+1)*2]-N.xy[v*2], dy=N.xy[(v+1)*2+1]-N.xy[v*2+1], len=Math.hypot(dx,dy);
+      if (len<8) continue;
+      edges.push({ ang: Math.atan2(dy,dx)*180/Math.PI, len });
+    }
+    for (let k=0; k<edges.length-2; k++){
+      const a=edges[k], b=edges[k+1], c=edges[k+2];
+      if (b.len>JOG_MAX_FT) continue;
+      if (angDiff(a.ang,b.ang)>JOG_TURN_MIN && angDiff(b.ang,c.ang)>JOG_TURN_MIN && angDiff(a.ang,c.ang)<JOG_NET_MAX) jogs++;
+    }
+    const x0=N.ep[i*4], y0=N.ep[i*4+1], x1=N.ep[i*4+2], y1=N.ep[i*4+3];
+    const dx=x1-x0, dy=y1-y0, len=Math.hypot(dx,dy); if (!len) continue;
+    chord.set(i, { ang: Math.atan2(dy,dx)*180/Math.PI, len });
+    for (const [x,y] of [[x0,y0],[x1,y1]]){ const k=nodeKey(x,y); if (!byNode.has(k)) byNode.set(k,[]); byNode.get(k).push(i); }
+  }
+  for (const i of feats){
+    const sb = chord.get(i); if (!sb || sb.len>JOG_MAX_FT) continue;
+    const x0=N.ep[i*4], y0=N.ep[i*4+1], x1=N.ep[i*4+2], y1=N.ep[i*4+3];
+    const n0=(byNode.get(nodeKey(x0,y0))||[]).filter(s=>s!==i), n1=(byNode.get(nodeKey(x1,y1))||[]).filter(s=>s!==i);
+    if (n0.length!==1 || n1.length!==1) continue;   // a simple link, one neighbor on each side - not a branch point
+    const a=chord.get(n0[0]), c=chord.get(n1[0]); if (!a || !c) continue;
+    if (angDiff(a.ang,sb.ang)>JOG_TURN_MIN && angDiff(sb.ang,c.ang)>JOG_TURN_MIN && angDiff(a.ang,c.ang)<JOG_NET_MAX) jogs++;
+  }
+  return jogs;
+}
 function notableLists(N, elig){
   const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]));
   const J = named.filter(j => N.sL[j]>0);
@@ -711,6 +758,12 @@ function notableLists(N, elig){
   const deg = nodeDegrees(N, elig);
   const nonDead = brokenCand.map(([j])=>[j, nonDeadEndInterruptions(N,j,elig,deg)]).filter(x=>x[1]>0).sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
   lists.push({ id:"interrupted", label:"Most interrupted (not dead ends)", desc:"streets broken into pieces where the break isn't just a dead end - another street still passes through", names: nonDead.map(x=>x[0]), extra: new Map(nonDead), extraUnit:"non-dead-end breaks" });
+  // Side-jogs: a sharp turn, a short run, then a sharp turn back - counted per street and per mile of end-to-end distance
+  const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !ODD_NAME.test(N.keys[j].toUpperCase())).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
+  const jogsTop = jogCand.slice().sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
+  lists.push({ id:"jogs", label:"Most side-jogs", desc:"streets with the most sharp-turn/short-run/sharp-turn-back jogs", names: jogsTop.map(x=>x[0]), extra: new Map(jogsTop.map(([j,n])=>[j,n])), extraUnit:"jogs" });
+  const jogsRate = jogCand.map(([j,n,feats])=>{ const ext=streetExtent(N,feats).extent; return ext>0 ? [j, +(n/(ext/FT_MI)).toFixed(2)] : null; }).filter(Boolean).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  lists.push({ id:"jogs-rate", label:"Most side-jogs per mile", desc:"side-jogs divided by the street's straight-line end-to-end distance", names: jogsRate.map(x=>x[0]), extra: new Map(jogsRate), extraUnit:"jogs/mi end-to-end" });
   return lists.filter(l=>l.names.length || l.short);
 }
 
@@ -776,7 +829,9 @@ function streetAnalysis(N, elig, inters){
   const ewNorth = [...geos.keys()].filter(j=>!geos.get(j).ns && geos.get(j).pos>=0).sort((a,b)=>geos.get(a).pos-geos.get(b).pos);  // out from Madison, going north
   const ewSouth = [...geos.keys()].filter(j=>!geos.get(j).ns && geos.get(j).pos<0).sort((a,b)=>geos.get(b).pos-geos.get(a).pos);   // out from Madison, going south
 
-  return { diag, noDead, geos, order:{ ns, ewNorth, ewSouth } };
+  const az = J.slice().sort((a,b)=>N.names[a].localeCompare(N.names[b], undefined, {numeric:true}));
+
+  return { diag, noDead, geos, order:{ ns, ewNorth, ewSouth }, az };
 }
 
 /* ---------- Plain-language queries ---------- */
@@ -801,9 +856,12 @@ function findStreets(N, text){
 function parseQuery(N, lists, text){
   const t = text.toLowerCase().trim();
   if (!t) return { kind:"none" };
+  if (/alphabetical/.test(t)) return { kind:"az" };
   if (/^(whole|all|everything|reset|clear)\b|whole (grid|city)|all streets/.test(t)) return { kind:"whole" };
   const streets = findStreets(N, text);
   if (streets.length) return { kind:"streets", names:streets, pieces: /part|piece|fragment|broken|section|gap|split/.test(t) };
+  if (/diagonal.*(6|six)[\s-]?way|(6|six)[\s-]?way.*diagonal/.test(t))
+    return { kind:"diagSix", sort: /fewest|least|lowest|minimum/.test(t) ? "total-asc" : "total" };
   const interModes = [
     [/multi-?way|\d+[\s-]?way|five[\s-]?way|six[\s-]?way|seven[\s-]?way|eight[\s-]?way|streets meet|most streets|six corners?/,"multiway"],
     [/acute|sliver|(sharp|narrow|shallow|tight)\w*\s*angle/,"acute"],
@@ -816,7 +874,10 @@ function parseQuery(N, lists, text){
     return mode==="multiway" ? { kind:"intersections", mode, degree: wayDegree(t) } : { kind:"intersections", mode };
   if (/intersection|corner/.test(t) && /weird|strange|odd|crazy|confusing|unusual|wild|funky|notable/.test(t)) return { kind:"intersections", mode:"multiway", degree:0 };
   const L = id => lists.find(l=>l.id===id);
-  const rules = [[/shortest|short/,"shortest"],[/non[\s-]?dead[\s-]?end|not\s+(a\s+)?dead[\s-]?end/,"interrupted"],[/broken|fragment|pieces|gaps|interrupt/,"broken"],[/trail|plank|indian/,"trails"],[/diagonal|off.?grid|angle/,"diagonal"],[/crooked|curv|wigg|wind|jog/,"crooked"],[/expressway|highway|freeway|expy/,"expy"],[/boulevard|blvd/,"blvd"],[/mile|section line/,"mile"],[/longest|long/,"longest"]];
+  const rules = [[/shortest|short/,"shortest"],[/interrupt/,"interrupted"],[/broken|fragment|pieces|gaps/,"broken"],
+    [/jog.*(per|mile|end.to.end|distance)/,"jogs-rate"],[/jog/,"jogs"],
+    [/trail|plank|indian/,"trails"],[/diagonal|off.?grid|angle/,"diagonal"],[/crooked|curv|wigg|wind/,"crooked"],
+    [/expressway|highway|freeway|expy/,"expy"],[/boulevard|blvd/,"blvd"],[/mile|section line/,"mile"],[/longest|long/,"longest"]];
   for (const [re,id] of rules) if (re.test(t) && L(id)) return { kind:"list", list:L(id) };
   return { kind:"miss" };
 }
@@ -1166,7 +1227,9 @@ $("shortTable").onclick=e=>{ if (headerClick(e, ()=>shortSort, v=>{ shortSort=v;
   say(`<strong>${esc(pretty(NET.names[j]))}</strong> is ${fmt(r.ft)} ft end to end, ${r.segs} segment${r.segs>1?"s":""}${NET.meta.anchored?`, near ${addrX(r.cx)} · ${addrY(r.cy)}`:""}.`); };
 $("shortTable").onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbtn")) $("shortTable").onclick(e); };
 
-const EXAMPLES = ["Show the other parts of Ancona","Show the old trail diagonals","Which streets are most broken up?","Compare Clark and Lincoln","Most crooked streets","Shortest streets","Show the expressways","Weirdest intersections"];
+const EXAMPLES = ["Longest streets","Shortest streets","Most interrupted","Mile-line streets","Off-grid diagonals","Most crooked streets",
+  "Most side-jogs","Most side-jogs per end-to-end distance","Which diagonal streets have the fewest 6-way intersections?",
+  "List all streets alphabetically","Compare Clark and Lincoln"];
 for (const q of EXAMPLES){ const b=document.createElement("button"); b.type="button"; b.className="chip ex"; b.textContent=q; b.onclick=()=>{ $("ask").value=q; runQuery(q); }; $("examples").appendChild(b); }
 
 function runQuery(text){
@@ -1175,6 +1238,8 @@ function runQuery(text){
   if (r.kind==="whole"){ $("btnWhole").click(); return; }
   if (r.kind==="list"){ showList(r.list); return; }
   if (r.kind==="intersections"){ showIntersections(r.mode, r.degree); return; }
+  if (r.kind==="diagSix"){ showDiagSix(r.sort); return; }
+  if (r.kind==="az"){ showAZ(); return; }
   if (r.kind==="streets"){
     select(r.names);
     if (r.names.length===1 && !ui.piecesOf){ say(`<strong>${esc(pretty(NET.names[r.names[0]]))}</strong> is hidden by the class/status filters below. Switch them on to see it.`); return; }
@@ -1390,6 +1455,12 @@ $("diagSixTable").onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbt
 $("btnExportDiagSix").onclick=()=>exportTxt("chicago-diagonals-6way.txt", [
   "Diagonal streets by 6-way intersections - Chicago Grid Lab", "", "Street\t6-way corners\tPer mile\tMiles",
   ...diagRows().map(r=>`${NET.names[r.j]}\t${r.total}\t${r.perMile.toFixed(2)}\t${(NET.sL[r.j]/FT_MI).toFixed(2)}`)]);
+function showDiagSix(sort){
+  diagSort = sort; renderDiagSix();
+  $("diagSixDetails").open = true;
+  say($("diagSixNote").textContent);
+  $("diagSixDetails").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+}
 
 /* Streets over a mile long where no piece ever simply dead-ends */
 function renderNoDead(){
@@ -1416,9 +1487,26 @@ $("btnExportNS").onclick=()=>exportOrder("chicago-streets-ns-east-to-west.txt", 
 $("btnExportEWN").onclick=()=>exportOrder("chicago-streets-ew-north.txt", "East-west streets, north from Madison - Chicago Grid Lab", ANALYSIS.order.ewNorth);
 $("btnExportEWS").onclick=()=>exportOrder("chicago-streets-ew-south.txt", "East-west streets, south from Madison - Chicago Grid Lab", ANALYSIS.order.ewSouth);
 
+/* Every eligible street, A to Z */
+function renderAZ(){
+  const rows = ANALYSIS.az;
+  $("azTable").innerHTML = `<tr><th class="r">#</th><th>Street</th><th class="r">Miles</th></tr>` +
+    rows.map((j,k)=>`<tr class="click" tabindex="0" data-j="${j}"><td class="r">${k+1}</td><td>${esc(pretty(NET.names[j]))}</td><td class="r">${fmt(NET.sL[j]/FT_MI,2)}</td></tr>`).join("");
+}
+rowClickSelect("azTable");
+$("btnExportAZ").onclick=()=>exportTxt("chicago-streets-az.txt", [
+  "All streets, A-Z - Chicago Grid Lab", "", "#\tStreet\tMiles",
+  ...ANALYSIS.az.map((j,k)=>`${k+1}\t${NET.names[j]}\t${(NET.sL[j]/FT_MI).toFixed(2)}`)]);
+function showAZ(){
+  renderAZ();
+  $("azDetails").open = true;
+  say(`All ${ANALYSIS.az.length} streets, A to Z, under the current class/status filters. See the table below.`);
+  $("azDetails").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+}
+
 function renderAnalysis(){
   if (!NET || !ANALYSIS) return;
-  renderDiagSix(); renderNoDead();
+  renderDiagSix(); renderNoDead(); renderAZ();
   renderOrderTable("orderNSTable", ANALYSIS.order.ns);
   renderOrderTable("orderEWNTable", ANALYSIS.order.ewNorth);
   renderOrderTable("orderEWSTable", ANALYSIS.order.ewSouth);
