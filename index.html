@@ -861,6 +861,8 @@ function parseQuery(N, lists, text){
   const t = text.toLowerCase().trim();
   if (!t) return { kind:"none" };
   if (/alphabetical/.test(t)) return { kind:"az" };
+  const letterM = t.match(/\bstarts?(?:ing)?\s+with\s+(?:the\s+)?(?:letter\s+)?([a-z])\b/);
+  if (letterM) return { kind:"letter", letter: letterM[1].toUpperCase() };
   if (/^(whole|all|everything|reset|clear)\b|whole (grid|city)|all streets/.test(t)) return { kind:"whole" };
   const streets = findStreets(N, text);
   if (streets.length) return { kind:"streets", names:streets, pieces: /part|piece|fragment|broken|section|gap|split/.test(t) };
@@ -1233,7 +1235,7 @@ $("shortTable").onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbtn"
 
 const EXAMPLES = ["Longest streets","Shortest streets","Most interrupted","Mile-line streets","Off-grid diagonals","Most crooked streets",
   "Most side-jogs","Most side-jogs per end-to-end distance","Which diagonal streets have the fewest 6-way intersections?",
-  "List all streets alphabetically","Compare Clark and Lincoln"];
+  "List all streets alphabetically","Streets starting with W","Compare Clark and Lincoln"];
 for (const q of EXAMPLES){ const b=document.createElement("button"); b.type="button"; b.className="chip ex"; b.textContent=q; b.onclick=()=>{ $("ask").value=q; runQuery(q); }; $("examples").appendChild(b); }
 
 function runQuery(text){
@@ -1244,6 +1246,7 @@ function runQuery(text){
   if (r.kind==="intersections"){ showIntersections(r.mode, r.degree); return; }
   if (r.kind==="diagSix"){ showDiagSix(r.sort); return; }
   if (r.kind==="az"){ showAZ(); return; }
+  if (r.kind==="letter"){ showLetter(r.letter); return; }
   if (r.kind==="streets"){
     select(r.names);
     if (r.names.length===1 && !ui.piecesOf){ say(`<strong>${esc(pretty(NET.names[r.names[0]]))}</strong> is hidden by the class/status filters below. Switch them on to see it.`); return; }
@@ -1506,6 +1509,12 @@ function showAZ(){
   $("azDetails").open = true;
   say(`All ${ANALYSIS.az.length} streets, A to Z, under the current class/status filters. See the table below.`);
   $("azDetails").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+}
+function showLetter(letter){
+  const rows = ANALYSIS.az.filter(j => NET.names[j][0]===letter);
+  select(rows);
+  say(rows.length ? `${rows.length} street${rows.length===1?"":"s"} start with <strong>${esc(letter)}</strong>: ${rows.slice(0,8).map(j=>`<strong>${esc(pretty(NET.names[j]))}</strong>`).join(", ")}${rows.length>8?`, and ${rows.length-8} more`:""}. They're selected on the map below.`
+                    : `No streets start with <strong>${esc(letter)}</strong>.`);
 }
 
 function renderAnalysis(){
