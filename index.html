@@ -1178,8 +1178,10 @@ function draw(){
   const zoomW = Math.max(0.6, Math.min(2.2, view.s*60));
   const order=[...groups.keys.keys()].sort((a,b)=>(a==="on"?-1:0)-(b==="on"?-1:0));
   const selW = ui.sel.length ? Math.max(2.2, zoomW*1.8) : zoomW;
-  if (!ui.ghost){   // Ghost Mode replaces the real network with the fictional one, it doesn't overlay it
-    strokeSet(groups.faint, colors.faint, Math.max(0.5, zoomW*0.7));
+  // The faint backdrop stays for orientation even in Ghost Mode; only the bold, color-coded real
+  // streets are replaced by the fictional ones - Ghost Mode hides the street, not the city.
+  strokeSet(groups.faint, colors.faint, Math.max(0.5, zoomW*0.7));
+  if (!ui.ghost){
     for (const k of order) strokeSet(groups.keys.get(k), colorFor(k), (k==="near"||k==="off") ? zoomW*1.15 : selW);
   }
   if (ui.sel.length && ui.sel.length<=300){
