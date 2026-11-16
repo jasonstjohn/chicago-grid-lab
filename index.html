@@ -260,31 +260,34 @@ footer a,.sec a{color:var(--blue)}
         </div>
       </div>
       <div id="classChips" style="display:grid;gap:6px"></div>
-      <div class="figRow">
-        <svg id="rose" viewBox="0 0 300 300" width="76" height="76" role="img" aria-label="Orientation rose"></svg>
-        <div class="figs">
-          <div class="fig"><span class="v" id="fPhi">–</span><span class="k">Grid order φ</span><span class="p" id="pPhi"></span></div>
-          <div class="fig"><span class="v" id="fH">–</span><span class="k">Orientation entropy</span><span class="p" id="pH"></span></div>
-          <div class="fig"><span class="v" id="fCard">–</span><span class="k">Length within 2° of N·S·E·W</span><span class="p" id="pCard"></span></div>
+      <details>
+        <summary><h3>Orientation, grid order &amp; size</h3></summary>
+        <div class="figRow">
+          <svg id="rose" viewBox="0 0 300 300" width="76" height="76" role="img" aria-label="Orientation rose"></svg>
+          <div class="figs">
+            <div class="fig"><span class="v" id="fPhi">–</span><span class="k">Grid order φ</span><span class="p" id="pPhi"></span></div>
+            <div class="fig"><span class="v" id="fH">–</span><span class="k">Orientation entropy</span><span class="p" id="pH"></span></div>
+            <div class="fig"><span class="v" id="fCard">–</span><span class="k">Length within 2° of N·S·E·W</span><span class="p" id="pCard"></span></div>
+          </div>
         </div>
-      </div>
-      <div class="scale" aria-hidden="true"><div class="track"></div><div class="m pin" id="mPin" hidden></div><div class="m" id="mPhi"></div><div class="ends"><span>0 · no order</span><span>1 · perfect grid</span></div></div>
-      <p class="note">φ rescales entropy so that a perfect four-way grid scores 1 and streets pointing every which way score 0 (Boeing 2019). Entropy runs from 1.386 for a perfect grid to 3.584 for uniform bearings.</p>
-      <p class="note" id="roseNote"></p>
-    </section>
-
-    <section class="sec">
-      <h2>Size and shape</h2>
-      <div class="tablewrap"><table id="sizeTable"></table></div>
-      <h3>Segment lengths (log scale)</h3>
-      <div class="charts"><svg id="lenHist" viewBox="0 0 420 170" width="100%" style="max-width:520px" role="img" aria-label="Histogram of segment lengths"></svg></div>
-      <p class="note">One address block is 100 house numbers, or ⅛ mile (660 ft), on Chicago's 800-per-mile grid.</p>
+        <div class="scale" aria-hidden="true"><div class="track"></div><div class="m pin" id="mPin" hidden></div><div class="m" id="mPhi"></div><div class="ends"><span>0 · no order</span><span>1 · perfect grid</span></div></div>
+        <p class="note">φ rescales entropy so that a perfect four-way grid scores 1 and streets pointing every which way score 0 (Boeing 2019). Entropy runs from 1.386 for a perfect grid to 3.584 for uniform bearings.</p>
+        <p class="note" id="roseNote"></p>
+        <h3>Size and shape</h3>
+        <div class="tablewrap"><table id="sizeTable"></table></div>
+        <h3>Segment lengths (log scale)</h3>
+        <div class="charts"><svg id="lenHist" viewBox="0 0 420 170" width="100%" style="max-width:520px" role="img" aria-label="Histogram of segment lengths"></svg></div>
+        <p class="note">One address block is 100 house numbers, or ⅛ mile (660 ft), on Chicago's 800-per-mile grid.</p>
+      </details>
     </section>
 
     <section class="sec">
       <h2>Intersections</h2>
-      <div class="topo" id="topo"></div>
-      <p class="note">Nodes come from segment endpoints snapped to 1 ft, as in <code>chicago_streets_stats.py</code>. A degree-2 node is where one segment hands off to the next. Area selections cut segments at the edge, which shows up as extra dead ends.</p>
+      <details>
+        <summary><h3>Topology</h3></summary>
+        <div class="topo" id="topo"></div>
+        <p class="note">Nodes come from segment endpoints snapped to 1 ft, as in <code>chicago_streets_stats.py</code>. A degree-2 node is where one segment hands off to the next. Area selections cut segments at the edge, which shows up as extra dead ends.</p>
+      </details>
       <details id="interDetails">
         <summary><h3>Weirdest intersections</h3></summary>
         <div id="interBox">
