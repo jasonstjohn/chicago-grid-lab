@@ -320,6 +320,12 @@ footer a,.sec a{color:var(--blue)}
         <div class="tablewrap"><table id="diagSixTable"></table></div>
         <p class="note" id="diagSixNote"></p>
       </details>
+      <details id="fewInterDetails">
+        <summary><h3>Fewest intersections</h3></summary>
+        <div class="scope"><span></span><button class="btn small" id="btnExportFewInter" type="button">Export .txt</button></div>
+        <div class="tablewrap"><table id="fewInterTable"></table></div>
+        <p class="note" id="fewInterNote"></p>
+      </details>
       <details>
         <summary><h3>Streets without a dead end</h3></summary>
         <div class="scope"><span></span><button class="btn small" id="btnExportNoDead" type="button">Export .txt</button></div>
@@ -748,6 +754,11 @@ const ODD_NAME = /RAMP|TURN|ACCESS|BUSWAY|PRIVATE|UNKNOWN|AIRPORT|LEVEL|^I\d|^LS
 // facility names like "LOWERLEVELT1", which have no boundary around the keyword either.
 const ODD_NAME_EXCEPT = new Set(["CLEVELAND"]);
 const isOddName = key => ODD_NAME.test(key) && !ODD_NAME_EXCEPT.has(key);
+// A street is a ramp if ANY of its eligible segments carries a ramp STREET_TYP - same all-or-nothing
+// rule shortestStreets() already applies, just not yet applied to the shared "ordinary street" filter
+// used by notableLists()/streetAnalysis(). Needed because a ramp's own name doesn't always say RAMP
+// (e.g. "Stevenson Ib Lsd Sb", STREET_TYP "ER"), so isOddName's text match alone misses it.
+const isRampStreet = (N, j, elig) => N.typeField && eligibleFeats(N, j, elig).some(i => ODD_TYPES.has(String(N.props[i][N.typeField]??"").trim().toUpperCase()));
 const EXIST_CLASSES = new Set(["1","2","3","4","5","7","9"]);   // everything that exists as a street
 function streetExtent(N, feats){
   let n=0, mx=0, my=0;
@@ -876,14 +887,15 @@ function notableLists(N, elig, inters){
   // dead end or a street simply curving through on its own never counts) - plus node.names.length>1,
   // so a node where the ONLY street present meets itself (a divided roadway rejoining, a Y-branch of
   // one street) doesn't count as an intersection either; more than one distinct street has to be there.
-  // Same ¼-mile length floor as "broken"/"jogs" above, so the ~2,255 trivial dead-end stubs (which
-  // would all tie at zero) don't drown out the genuinely long streets that just happen to cross few others.
+  // No length floor: measured first (checked the real data before deciding) - only 18 streets have zero
+  // real intersections even with none, not the thousands a floor would be needed against, and they're
+  // already sorted longest-first by the tiebreak below, so a tiny stub never crowds out a longer one.
   const interCount = new Map();
   for (const node of inters) if (node.names.length>1) for (const j of node.names) interCount.set(j, (interCount.get(j)||0)+1);
-  const fewInter = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase())).map(j=>[j, interCount.get(j)||0]).sort((a,b)=>a[1]-b[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
-  lists.push({ id:"few-inter", label:"Fewest intersections", desc:"streets over ¼ mile with the fewest real intersections (3-way or more, with more than one distinct street present; dead ends and a street meeting only itself don't count)", names: fewInter.map(x=>x[0]), extra: new Map(fewInter), extraUnit:"intersections" });
+  const fewInter = J.filter(j=>!isOddName(N.keys[j].toUpperCase()) && !isRampStreet(N,j,elig)).map(j=>[j, interCount.get(j)||0]).sort((a,b)=>a[1]-b[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
+  lists.push({ id:"few-inter", label:"Fewest intersections", desc:"streets with the fewest real intersections (3-way or more, with more than one distinct street present; dead ends and a street meeting only itself don't count)", names: fewInter.map(x=>x[0]), extra: new Map(fewInter), extraUnit:"intersections" });
   // Side-jogs: a sharp turn, a short run, then a sharp turn back - counted per street and per mile of end-to-end distance
-  const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase())).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
+  const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase()) && !isRampStreet(N,j,elig)).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
   const jogsTop = jogCand.slice().sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
   lists.push({ id:"jogs", label:"Most side-jogs", desc:"streets with the most sharp-turn/short-run/sharp-turn-back jogs", names: jogsTop.map(x=>x[0]), extra: new Map(jogsTop.map(([j,n])=>[j,n])), extraUnit:"jogs" });
   const jogsRate = jogCand.map(([j,n,feats])=>{ const ext=streetExtent(N,feats).extent; return ext>0 ? [j, +(n/(ext/FT_MI)).toFixed(2)] : null; }).filter(Boolean).sort((a,b)=>b[1]-a[1]).slice(0,12);
@@ -932,7 +944,7 @@ function findIntersections(N, elig){
 const isDiagonal = (N, j) => N.sL[j]>1.5*FT_MI && (N.sDev[j]/N.sL[j])>12;
 function streetAnalysis(N, elig, inters){
   // Ordinary streets only, same exclusions as the shortest-streets list (ramps, levels, airport roads, etc.)
-  const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]) && !isOddName(N.keys[j].toUpperCase()));
+  const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]) && !isOddName(N.keys[j].toUpperCase()) && !isRampStreet(N,j,elig));
   const J = named.filter(j => N.sL[j]>0);
 
   const sixCount = new Map();
@@ -955,7 +967,13 @@ function streetAnalysis(N, elig, inters){
 
   const az = J.slice().sort((a,b)=>N.names[a].localeCompare(N.names[b], undefined, {numeric:true}));
 
-  return { diag, noDead, geos, order:{ ns, ewNorth, ewSouth }, az };
+  // Every ordinary street's real-intersection count (not just the notable-list top 12) - same
+  // definition as the "Fewest intersections" chip: 3-way+ nodes with more than one distinct street.
+  const interCount = new Map();
+  for (const node of inters) if (node.names.length>1) for (const j of node.names) interCount.set(j, (interCount.get(j)||0)+1);
+  const fewInter = J.map(j => ({ j, count: interCount.get(j)||0 }));
+
+  return { diag, noDead, geos, order:{ ns, ewNorth, ewSouth }, az, fewInter };
 }
 
 /* ---------- Plain-language queries ---------- */
@@ -1341,6 +1359,7 @@ function renderLists(){
 function showList(l){
   $("streetSort").value = l.order==="geo" ? "geo" : "sel";
   if (l.short){ showShortest(); return; }
+  if (l.id==="few-inter"){ showFewInter(); return; }
   let note="";
   if (l.enable && l.enable.some(k=>ui.classOff.has(k))){ l.enable.forEach(k=>ui.classOff.delete(k)); note=" Expressway and ramp classes are now switched on."; }
   select(l.names);
@@ -1626,6 +1645,35 @@ function showDiagSix(sort){
   $("diagSixDetails").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
 }
 
+/* Every ordinary street ranked by real intersections (3-way+, more than one distinct street) */
+let fewInterSort="count";
+function fewInterRows(){
+  const rows = ANALYSIS.fewInter.slice();
+  if (fewInterSort==="name") rows.sort((a,b)=>byName(a.j,b.j));
+  else if (fewInterSort==="name-desc") rows.sort((a,b)=>byName(b.j,a.j));
+  else if (fewInterSort==="count-desc") rows.sort((a,b)=>b.count-a.count || NET.sL[a.j]-NET.sL[b.j]);
+  else rows.sort((a,b)=>a.count-b.count || NET.sL[b.j]-NET.sL[a.j]);
+  return rows;
+}
+function renderFewInter(){
+  const rows = fewInterRows();
+  $("fewInterNote").textContent = `${rows.length} ordinary streets, ranked by real intersections (3-way or more, with more than one distinct street present), under the current class/status filters.`;
+  $("fewInterTable").innerHTML = `<tr>${sortTh("Street",["name","name-desc"],fewInterSort)}${sortTh("Intersections",["count","count-desc"],fewInterSort,true)}<th class="r">Miles</th></tr>` +
+    rows.map(r=>`<tr class="click" tabindex="0" data-j="${r.j}"><td>${esc(pretty(NET.names[r.j]))}</td><td class="r">${r.count}</td><td class="r">${fmt(NET.sL[r.j]/FT_MI,2)}</td></tr>`).join("");
+}
+$("fewInterTable").onclick=e=>{ if (headerClick(e, ()=>fewInterSort, v=>{ fewInterSort=v; renderFewInter(); })) return;
+  const tr=e.target.closest("tr[data-j]"); if (tr){ select([+tr.dataset.j]); runQuery(NET.names[+tr.dataset.j]); } };
+$("fewInterTable").onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbtn")) $("fewInterTable").onclick(e); };
+$("btnExportFewInter").onclick=()=>exportTxt("chicago-fewest-intersections.txt", [
+  "Fewest intersections - Chicago Grid Lab", "", "Street\tIntersections\tMiles",
+  ...fewInterRows().map(r=>`${NET.names[r.j]}\t${r.count}\t${(NET.sL[r.j]/FT_MI).toFixed(2)}`)]);
+function showFewInter(){
+  renderFewInter();
+  $("fewInterDetails").open = true;
+  say($("fewInterNote").textContent);
+  $("fewInterDetails").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+}
+
 /* Streets over a mile long where no piece ever simply dead-ends */
 function renderNoDead(){
   const rows = ANALYSIS.noDead.slice().sort((a,b)=>NET.sL[b]-NET.sL[a]);
@@ -1676,7 +1724,7 @@ function showLetter(letter){
 
 function renderAnalysis(){
   if (!NET || !ANALYSIS) return;
-  renderDiagSix(); renderNoDead(); renderAZ();
+  renderDiagSix(); renderFewInter(); renderNoDead(); renderAZ();
   renderOrderTable("orderNSTable", ANALYSIS.order.ns);
   renderOrderTable("orderEWNTable", ANALYSIS.order.ewNorth);
   renderOrderTable("orderEWSTable", ANALYSIS.order.ewSouth);
