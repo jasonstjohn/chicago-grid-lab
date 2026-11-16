@@ -662,7 +662,10 @@ function computeGhost(N, elig, boundary){
     if (t>0 && t<=GHOST_EXT_SANITY_FT) ext.push([x,y,x+ddx*t,y+ddy*t,f]);
   };
   for (let j=0;j<N.names.length;j++){
-    if (N.names[j]==="(unnamed)") continue;
+    // Ghost Grid is a grid thing: a diagonal has no "next piece along the grid line" to connect
+    // to and no single cardinal direction to extend in, so it gets no ghost dual at all. Same
+    // isDiagonal() definition as the "Off-grid diagonals" list, for consistency.
+    if (N.names[j]==="(unnamed)" || isDiagonal(N, j)) continue;
     const feats = eligibleFeats(N, j, elig); if (!feats.length) continue;
     const groups = pieceGroups(N, feats);
     const pieces = groups.map(fs => { const b=[Infinity,Infinity,-Infinity,-Infinity];
