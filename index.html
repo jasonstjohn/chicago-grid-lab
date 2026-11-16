@@ -212,7 +212,7 @@ footer a,.sec a{color:var(--blue)}
         <option value="plain">Color: plain</option>
       </select>
       <button class="btn small" id="btnDead" type="button" aria-pressed="false">Dead ends</button>
-      <button class="btn small" id="btnGhost" type="button" aria-pressed="false" title="Ghost Grid: fictional streets filling the gaps and extending dead ends to the map's edge">
+      <button class="btn small" id="btnGhost" type="button" aria-pressed="false" title="Ghost Grid: fictional streets filling the gaps and extending dead ends to the city's real border">
         <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z" fill="currentColor"/><circle cx="9" cy="10" r="1.3" fill="var(--map)"/><circle cx="15" cy="10" r="1.3" fill="var(--map)"/></svg>Ghost Grid</button>
     </div>
     <div class="ident" id="ident" hidden></div>
@@ -594,12 +594,42 @@ function streetPieces(N, j, elig){
   return { pieces, ew, bbox:all };
 }
 
-/* Ghost Grid: fictional streets filling the gaps, plus dead ends extended outward to the map's
-   own edge. There's no official city-boundary polygon in this dataset, so the network's own
-   bounding box stands in for "the edge of the city" (see NOTES.md ledger for this and the
-   extension-cap judgment call below). */
-const GHOST_EXT_CAP_FT = FT_MI;  // only extend a dead end if the edge is within 1 mi of it
-function computeGhost(N, elig){
+/* Ghost Grid: fictional streets filling the gaps, plus dead ends extended outward to the real
+   city limit (from the Chicago Data Portal's own boundary polygon, "Boundaries - City",
+   data.cityofchicago.org/resource/qqq8-j68g; see NOTES.md). Extensions are clipped exactly to
+   that polygon, so they stop at the actual border and the lake shore, not a bounding box. */
+const GHOST_EXT_CAP_FT = FT_MI;  // only extend a dead end if the real border is within 1 mi of it
+const BOUNDARY_URL = "data/chicago_boundary.geojson";
+function polygonRings(geom){   // GeoJSON Polygon/MultiPolygon (lon/lat) -> rings in the local x,y frame
+  const polys = geom.type==="MultiPolygon" ? geom.coordinates : geom.type==="Polygon" ? [geom.coordinates] : [];
+  const rings = [];
+  for (const poly of polys) for (const ring of poly) rings.push(ring.map(toFrameLonLat));
+  return rings;
+}
+function pointInRings(rings, x, y){   // even-odd test over every ring (holes/enclaves subtract naturally)
+  let inside = false;
+  for (const ring of rings) for (let i=0, j=ring.length-1; i<ring.length; j=i++){
+    const [xi,yi]=ring[i], [xj,yj]=ring[j];
+    if (((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside = !inside;
+  }
+  return inside;
+}
+/* First edge the ray (px,py)+t*(dx,dy) crosses, t in (0, maxT]. For a point already inside a
+   simple polygon this is its unique exit; maxT must be a true search horizon, not the caller's
+   cutoff, or a boundary farther than the cutoff gets misread as "reached" right at the cutoff. */
+function rayPolygonExit(rings, px, py, dx, dy, maxT){
+  let best = maxT;
+  for (const ring of rings) for (let i=0;i<ring.length;i++){
+    const A=ring[i], B=ring[(i+1)%ring.length];
+    const Ex=B[0]-A[0], Ey=B[1]-A[1], det=Ex*dy-Ey*dx;
+    if (Math.abs(det)<1e-9) continue;
+    const apx=A[0]-px, apy=A[1]-py;
+    const t=(Ex*apy-Ey*apx)/det, s=(dx*apy-dy*apx)/det;
+    if (t>1e-6 && t<best && s>=-1e-6 && s<=1+1e-6) best=t;
+  }
+  return best;
+}
+function computeGhost(N, elig, boundary){
   const links = [];
   for (let j=0;j<N.names.length;j++){
     if (N.names[j]==="(unnamed)") continue;
@@ -613,25 +643,27 @@ function computeGhost(N, elig){
     pieces.sort((p,q) => ew ? p.bbox[0]-q.bbox[0] : q.bbox[3]-p.bbox[3]);
     for (let k=0;k<pieces.length-1;k++){   // connect each piece to the next one along the street
       const p=pieces[k], q=pieces[k+1];
-      let best=Infinity, pa=null, pb=null;
+      let best=Infinity, pa=null, pb=null, bestA=-1;
       for (const a of p.feats) for (const ea of [0,2]) for (const b of q.feats) for (const eb of [0,2]){
         const d = Math.hypot(N.ep[a*4+ea]-N.ep[b*4+eb], N.ep[a*4+ea+1]-N.ep[b*4+eb+1]);
-        if (d<best){ best=d; pa=[N.ep[a*4+ea],N.ep[a*4+ea+1]]; pb=[N.ep[b*4+eb],N.ep[b*4+eb+1]]; }
+        if (d<best){ best=d; pa=[N.ep[a*4+ea],N.ep[a*4+ea+1]]; pb=[N.ep[b*4+eb],N.ep[b*4+eb+1]]; bestA=a; }
       }
-      if (pa) links.push([pa[0],pa[1],pb[0],pb[1]]);
+      if (pa) links.push([pa[0],pa[1],pb[0],pb[1],bestA]);
     }
   }
-  const deg = nodeDegrees(N, elig), [xmin,ymin,xmax,ymax] = N.bounds, ext = [];
-  for (let i=0;i<N.n;i++){ if (!elig[i]) continue;
+  const deg = nodeDegrees(N, elig), ext = [];
+  if (boundary) for (let i=0;i<N.n;i++){ if (!elig[i]) continue;
     for (const e of [0,2]){
       const x=N.ep[i*4+e], y=N.ep[i*4+e+1], k=Math.round(x)*1e7+Math.round(y);
       if ((deg.get(k)||0)!==1) continue;   // only true dead ends, same definition as the Dead ends overlay
+      // Skip a dead end that's already outside the city polygon: the street data and the
+      // boundary polygon are separate sources and don't perfectly line up at the edges, so a
+      // handful of dead ends sit just past the line already - nothing to extend there.
+      if (!pointInRings(boundary, x, y)) continue;
       const o=2-e, dx0=x-N.ep[i*4+o], dy0=y-N.ep[i*4+o+1], L=Math.hypot(dx0,dy0); if (!L) continue;
       const dx=dx0/L, dy=dy0/L;
-      let t=Infinity;
-      if (dx>0) t=Math.min(t,(xmax-x)/dx); else if (dx<0) t=Math.min(t,(xmin-x)/dx);
-      if (dy>0) t=Math.min(t,(ymax-y)/dy); else if (dy<0) t=Math.min(t,(ymin-y)/dy);
-      if (t>0 && t<=GHOST_EXT_CAP_FT) ext.push([x,y,x+dx*t,y+dy*t]);
+      const t = rayPolygonExit(boundary, x, y, dx, dy, 100*FT_MI);
+      if (t>0 && t<=GHOST_EXT_CAP_FT) ext.push([x,y,x+dx*t,y+dy*t,i]);
     }
   }
   return { links, ext };
@@ -784,7 +816,7 @@ function countJogs(N, feats){
   }
   return jogs;
 }
-function notableLists(N, elig){
+function notableLists(N, elig, inters){
   const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]));
   const J = named.filter(j => N.sL[j]>0);
   const byL = J.slice().sort((a,b)=>N.sL[b]-N.sL[a]);
@@ -807,6 +839,15 @@ function notableLists(N, elig){
   const deg = nodeDegrees(N, elig);
   const nonDead = brokenCand.map(([j])=>[j, nonDeadEndInterruptions(N,j,elig,deg)]).filter(x=>x[1]>0).sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
   lists.push({ id:"interrupted", label:"Most interrupted (not dead ends)", desc:"streets broken into pieces where the break isn't just a dead end - another street still passes through", names: nonDead.map(x=>x[0]), extra: new Map(nonDead), extraUnit:"non-dead-end breaks" });
+  // Fewest intersections: how many other named streets it actually crosses, not a continuity measure.
+  // Reuses the "real intersection" definition already in findIntersections() (3-way or more, so a
+  // dead end or a street simply curving through on its own never counts). Same ¼-mile length floor as
+  // "broken"/"jogs" above, so the ~2,255 trivial dead-end stubs (which would all tie at zero) don't
+  // drown out the genuinely long streets that just happen to cross very few others.
+  const interCount = new Map();
+  for (const node of inters) for (const j of node.names) interCount.set(j, (interCount.get(j)||0)+1);
+  const fewInter = J.filter(j=>N.sL[j]>FT_MI/4 && !ODD_NAME.test(N.keys[j].toUpperCase())).map(j=>[j, interCount.get(j)||0]).sort((a,b)=>a[1]-b[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
+  lists.push({ id:"few-inter", label:"Fewest intersections", desc:"streets over ¼ mile with the fewest real intersections (3-way or more; dead ends and simple curves don't count)", names: fewInter.map(x=>x[0]), extra: new Map(fewInter), extraUnit:"intersections" });
   // Side-jogs: a sharp turn, a short run, then a sharp turn back - counted per street and per mile of end-to-end distance
   const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !ODD_NAME.test(N.keys[j].toUpperCase())).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
   const jogsTop = jogCand.slice().sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
@@ -925,7 +966,8 @@ function parseQuery(N, lists, text){
     return mode==="multiway" ? { kind:"intersections", mode, degree: wayDegree(t) } : { kind:"intersections", mode };
   if (/intersection|corner/.test(t) && /weird|strange|odd|crazy|confusing|unusual|wild|funky|notable/.test(t)) return { kind:"intersections", mode:"multiway", degree:0 };
   const L = id => lists.find(l=>l.id===id);
-  const rules = [[/shortest|short/,"shortest"],[/interrupt/,"interrupted"],[/broken|fragment|pieces|gaps/,"broken"],
+  const rules = [[/shortest|short/,"shortest"],[/fewest.*intersect|least.*intersect|few.*intersect/,"few-inter"],
+    [/interrupt/,"interrupted"],[/broken|fragment|pieces|gaps/,"broken"],
     [/jog.*(per|mile|end.to.end|distance)/,"jogs-rate"],[/jog/,"jogs"],
     [/trail|plank|indian/,"trails"],[/diagonal|off.?grid|angle/,"diagonal"],[/crooked|curv|wigg|wind/,"crooked"],
     [/expressway|highway|freeway|expy/,"expy"],[/boulevard|blvd/,"blvd"],[/mile|section line/,"mile"],[/longest|long/,"longest"]];
@@ -969,7 +1011,7 @@ function toFrame(lines){
 "use strict";
 const $ = id => document.getElementById(id);
 let NET=null, LISTS=[], MASK=null, ELIG=null, STATS=null, PIN=null, filterSig="";
-let INTERS=[], INTER_ROWS=[], ANALYSIS=null, GHOST=null;
+let INTERS=[], INTER_ROWS=[], ANALYSIS=null, GHOST=null, BOUNDARY=null;
 const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, ghost:false, tool:"pan", piecesOf:null, focusPiece:-1, interMarks:[], interSegs:new Set() };
 const view = { x:0, y:0, s:0.01 };
 let colors = {};
@@ -980,7 +1022,7 @@ let colors = {};
 
 function readColors(){
   const cs=getComputedStyle(document.documentElement), v=k=>cs.getPropertyValue(k).trim();
-  colors={ map:v("--map"), ink:v("--ink"), muted:v("--muted"), faint:v("--faint"), blue:v("--blue"), red:v("--red"), redSoft:v("--red-soft"), panel:v("--panel"), ghost:v("--c5"),
+  colors={ map:v("--map"), ink:v("--ink"), muted:v("--muted"), faint:v("--faint"), blue:v("--blue"), red:v("--red"), redSoft:v("--red-soft"), panel:v("--panel"),
     cat:[v("--c1"),v("--c2"),v("--c3"),v("--c4"),v("--c5"),v("--c6")] };
 }
 readColors();
@@ -1003,6 +1045,12 @@ function useNetwork(lines, frame, label, kind){
   setSource(kind, `<b>${esc(label)}</b> · ${fmt(NET.n)} segments`);
   $("footSrc").textContent = `Fields: street name ${NET.nameField||"not found"}, class ${NET.classField||"not found"}, status ${NET.statusField||"not found"}.`+(NET.chicago?" Default filter: classes 2, 3, 4, 5, 7 with normal status (surface public streets), as in chicago_streets_stats.py.":"");
   fit(NET.bounds); recompute(); renderShortest();
+}
+async function loadBoundary(){   // small, so fetched before the street data; failure just means no Ghost Grid edge extensions
+  try {
+    const r = await fetch(BOUNDARY_URL); if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    BOUNDARY = polygonRings((await r.json()).geometry);
+  } catch(e){ console.warn(`Ghost Grid: couldn't load ${BOUNDARY_URL} (${e.message}); dead ends won't be extended.`); }
 }
 async function loadData(){
   try {
@@ -1032,10 +1080,11 @@ function recompute(){
   if (sig!==filterSig){   // class/status filters changed: refresh eligibility, street totals, lists
     filterSig=sig; ELIG=new Uint8Array(NET.n);
     for (let i=0;i<NET.n;i++) ELIG[i] = (!ui.classOff.has(NET.clsIdx[i]) && !ui.statusOff.has(NET.statIdx[i])) ? 1 : 0;
-    nameTotals(NET, ELIG); LISTS=notableLists(NET, ELIG); renderLists();
+    nameTotals(NET, ELIG);
     INTERS=findIntersections(NET, ELIG); renderIntersections();
+    LISTS=notableLists(NET, ELIG, INTERS); renderLists();
     ANALYSIS=streetAnalysis(NET, ELIG, INTERS); renderAnalysis();
-    GHOST=computeGhost(NET, ELIG);
+    GHOST=computeGhost(NET, ELIG, BOUNDARY);
   }
   const m=new Uint8Array(NET.n), sel=new Set(ui.sel), b=ui.box;
   for (let i=0;i<NET.n;i++){
@@ -1060,16 +1109,20 @@ function fit(b, pad=0.08){ if (!b || !W) { if (b){ view.x=(b[0]+b[2])/2; view.y=
   const w=Math.max(b[2]-b[0],300), h=Math.max(b[3]-b[1],300);
   view.x=(b[0]+b[2])/2; view.y=(b[1]+b[3])/2; view.s=Math.min(W/(w*(1+pad*2)), H/(h*(1+pad*2))); draw(); }
 
+/* The color a feature would take on the map right now: shared by real segments and, so a Ghost
+   Grid line reads as "the same street, continued", by the ghost lines standing in for it. */
+function colorKeyFor(N, i, sel){
+  if (sel) return "s"+sel.get(N.nameIdx[i]);
+  if (ui.colorMode==="grid") return N.dev[i]<=2 ? "on" : N.dev[i]<=15 ? "near" : "off";
+  if (ui.colorMode==="class") return "c"+N.clsIdx[i];
+  return "plain";
+}
 function groupFeatures(){
   const N=NET, g={ faint:[], keys:new Map() };
   const sel = ui.sel.length ? new Map(ui.sel.map((j,k)=>[j,k])) : null;
   for (let i=0;i<N.n;i++){
     if (!MASK[i]){ g.faint.push(i); continue; }
-    let k;
-    if (sel) k="s"+sel.get(N.nameIdx[i]);
-    else if (ui.colorMode==="grid") k = N.dev[i]<=2 ? "on" : N.dev[i]<=15 ? "near" : "off";
-    else if (ui.colorMode==="class") k="c"+N.clsIdx[i];
-    else k="plain";
+    const k = colorKeyFor(N, i, sel);
     if (!g.keys.has(k)) g.keys.set(k,[]); g.keys.get(k).push(i);
   }
   groups=g; renderLegend();
@@ -1108,11 +1161,19 @@ function draw(){
   }
   if (ui.dead && STATS){ ctx.fillStyle=colors.red; const r=Math.max(1.5,Math.min(3.5,view.s*40)); ctx.beginPath(); for (const [x,y] of STATS.dead){ const X=sx(x),Y=sy(y); if (X<-5||X>W+5||Y<-5||Y>H+5) continue; ctx.moveTo(X+r,Y); ctx.arc(X,Y,r,0,7); } ctx.fill(); }
   if (ui.ghost && GHOST){
-    ctx.setLineDash([6,5]); ctx.lineWidth=Math.max(1,zoomW*0.7); ctx.strokeStyle=colors.ghost;
-    ctx.beginPath();
-    for (const [x1,y1,x2,y2] of GHOST.links) { ctx.moveTo(sx(x1),sy(y1)); ctx.lineTo(sx(x2),sy(y2)); }
-    for (const [x1,y1,x2,y2] of GHOST.ext) { ctx.moveTo(sx(x1),sy(y1)); ctx.lineTo(sx(x2),sy(y2)); }
-    ctx.stroke(); ctx.setLineDash([]);
+    // Solid, colored exactly like the real street it continues - a ghost line should read as
+    // "the same street, kept going", not as a separate category.
+    const gsel = ui.sel.length ? new Map(ui.sel.map((j,k)=>[j,k])) : null, byKey = new Map();
+    for (const seg of [...GHOST.links, ...GHOST.ext]){
+      const k = colorKeyFor(NET, seg[4], gsel);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(seg);
+    }
+    for (const [k,segs] of byKey){
+      ctx.beginPath();
+      for (const [x1,y1,x2,y2] of segs) { ctx.moveTo(sx(x1),sy(y1)); ctx.lineTo(sx(x2),sy(y2)); }
+      ctx.strokeStyle=colorFor(k); ctx.lineWidth=(k==="near"||k==="off") ? zoomW*1.15 : selW; ctx.stroke();
+    }
   }
   // Intersection-list overview: the nearest segment of each street at each marked corner, plus a dot on the corner.
   // Amber rather than the grid-alignment blue/red so it reads as a highlight, not another alignment category.
@@ -1149,7 +1210,7 @@ function renderLegend(){
     h = NET.classes.slice(0,8).map((c,k)=>`<div><span class="sw" style="background:${colors.cat[k%6]}"></span><em>${esc(NET.classLabel(c))}</em></div>`).join("");
   } else h = `<div><span class="sw" style="background:${colors.ink}"></span><em>Streets</em></div>`;
   if (MASK && groups && groups.faint.length) h += `<div><span class="sw" style="background:${colors.faint}"></span><em>${ui.sel.length||ui.box?"Rest of the grid":"Filtered out"}</em></div>`;
-  if (ui.ghost) h += `<div><span class="sw" style="background:${colors.ghost}"></span><em>Ghost Grid: fictional streets across gaps and extended to the map's edge</em></div>`;
+  if (ui.ghost) h += `<div><em>Ghost Grid: solid lines, same color as the street they continue - fictional connections across gaps, and dead ends extended to the city's real border.</em></div>`;
   L.innerHTML=h;
 }
 
@@ -1290,7 +1351,7 @@ $("shortTable").onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbtn"
 
 const EXAMPLES = ["Longest streets","Shortest streets","Most interrupted","Mile-line streets","Off-grid diagonals","Most crooked streets",
   "Most side-jogs","Most side-jogs per end-to-end distance","Which diagonal streets have the fewest 6-way intersections?",
-  "List all streets alphabetically","Streets starting with W","Compare Clark and Lincoln"];
+  "List all streets alphabetically","Streets starting with W","Fewest intersections","Compare Clark and Lincoln"];
 for (const q of EXAMPLES){ const b=document.createElement("button"); b.type="button"; b.className="chip ex"; b.textContent=q; b.onclick=()=>{ $("ask").value=q; runQuery(q); }; $("examples").appendChild(b); }
 
 function runQuery(text){
@@ -1648,7 +1709,7 @@ addEventListener("scroll", () => { $("btnTop").hidden = scrollY < 400; }, {passi
 $("btnTop").onclick = () => scrollTo({top:0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
 
 /* Start: load the site's copy of Street Center Lines */
-requestAnimationFrame(()=>{ resize(); loadData(); });
+requestAnimationFrame(()=>{ resize(); loadBoundary().finally(loadData); });
 </script>
 </body>
 </html>
