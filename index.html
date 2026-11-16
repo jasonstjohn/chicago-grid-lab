@@ -716,6 +716,11 @@ const MILE_LINES = ["MADISON","STATE","NORTH","FULLERTON","BELMONT","IRVING PARK
    Length = extent: distance between the two far ends along the street's principal axis. */
 const ODD_TYPES = new Set(["ER","XR","SR","RL"]);
 const ODD_NAME = /RAMP|TURN|ACCESS|BUSWAY|PRIVATE|UNKNOWN|AIRPORT|LEVEL|^I\d|^LSD /;   // same as NOT_A_STREET in the Python
+// Real street names that happen to contain one of the keywords above as a plain substring (e.g.
+// "LEVEL" inside "CLEVELAND"). A word-boundary fix would also stop matching genuine concatenated
+// facility names like "LOWERLEVELT1", which have no boundary around the keyword either.
+const ODD_NAME_EXCEPT = new Set(["CLEVELAND"]);
+const isOddName = key => ODD_NAME.test(key) && !ODD_NAME_EXCEPT.has(key);
 const EXIST_CLASSES = new Set(["1","2","3","4","5","7","9"]);   // everything that exists as a street
 function streetExtent(N, feats){
   let n=0, mx=0, my=0;
@@ -730,7 +735,7 @@ function streetExtent(N, feats){
 function shortestStreets(N){
   const out=[];
   N.names.forEach((nm,j) => {
-    if (nm==="(unnamed)" || ODD_NAME.test(N.keys[j].toUpperCase())) return;
+    if (nm==="(unnamed)" || isOddName(N.keys[j].toUpperCase())) return;
     let feats = N.nameFeat[j];
     if (N.chicago){
       // Like the Python: only segments that exist as streets (CLASS 1-9) count, and every one must be ordinary
@@ -846,10 +851,10 @@ function notableLists(N, elig, inters){
   // drown out the genuinely long streets that just happen to cross very few others.
   const interCount = new Map();
   for (const node of inters) for (const j of node.names) interCount.set(j, (interCount.get(j)||0)+1);
-  const fewInter = J.filter(j=>N.sL[j]>FT_MI/4 && !ODD_NAME.test(N.keys[j].toUpperCase())).map(j=>[j, interCount.get(j)||0]).sort((a,b)=>a[1]-b[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
+  const fewInter = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase())).map(j=>[j, interCount.get(j)||0]).sort((a,b)=>a[1]-b[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
   lists.push({ id:"few-inter", label:"Fewest intersections", desc:"streets over ¼ mile with the fewest real intersections (3-way or more; dead ends and simple curves don't count)", names: fewInter.map(x=>x[0]), extra: new Map(fewInter), extraUnit:"intersections" });
   // Side-jogs: a sharp turn, a short run, then a sharp turn back - counted per street and per mile of end-to-end distance
-  const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !ODD_NAME.test(N.keys[j].toUpperCase())).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
+  const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase())).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
   const jogsTop = jogCand.slice().sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
   lists.push({ id:"jogs", label:"Most side-jogs", desc:"streets with the most sharp-turn/short-run/sharp-turn-back jogs", names: jogsTop.map(x=>x[0]), extra: new Map(jogsTop.map(([j,n])=>[j,n])), extraUnit:"jogs" });
   const jogsRate = jogCand.map(([j,n,feats])=>{ const ext=streetExtent(N,feats).extent; return ext>0 ? [j, +(n/(ext/FT_MI)).toFixed(2)] : null; }).filter(Boolean).sort((a,b)=>b[1]-a[1]).slice(0,12);
@@ -879,7 +884,7 @@ function findIntersections(N, elig){
   const out=[];
   for (const node of nodes.values()){
     const deg = node.edges.length; if (deg<3) continue;
-    const names = [...new Set(node.edges.map(e=>e.name))].filter(j=>j!==UNNAMED && !ODD_NAME.test(N.keys[j].toUpperCase()));
+    const names = [...new Set(node.edges.map(e=>e.name))].filter(j=>j!==UNNAMED && !isOddName(N.keys[j].toUpperCase()));
     const angs = node.edges.map(e=>e.ang).sort((a,b)=>a-b);
     let minGap=360;
     for (let i=0;i<angs.length;i++){ const g = i<angs.length-1 ? angs[i+1]-angs[i] : 360-(angs[angs.length-1]-angs[0]); if (g<minGap) minGap=g; }
@@ -898,7 +903,7 @@ function findIntersections(N, elig){
 const isDiagonal = (N, j) => N.sL[j]>1.5*FT_MI && (N.sDev[j]/N.sL[j])>12;
 function streetAnalysis(N, elig, inters){
   // Ordinary streets only, same exclusions as the shortest-streets list (ramps, levels, airport roads, etc.)
-  const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]) && !ODD_NAME.test(N.keys[j].toUpperCase()));
+  const named = [...N.names.keys()].filter(j => N.names[j]!=="(unnamed)" && !/^\d+ [NSEW]$/.test(N.names[j]) && !isOddName(N.keys[j].toUpperCase()));
   const J = named.filter(j => N.sL[j]>0);
 
   const sixCount = new Map();
