@@ -189,6 +189,7 @@ footer a,.sec a{color:var(--blue)}
       <ul class="suggest" id="suggest" role="listbox" hidden></ul>
     </div>
     <button class="btn primary" type="submit">Show</button>
+    <button class="btn small" id="btnClear" type="button">Clear</button>
   </form>
   <div class="examples" id="examples"><span class="label">Try</span></div>
   <div class="lists" id="lists"><span class="label">Notable lists</span></div>
@@ -872,13 +873,15 @@ function notableLists(N, elig, inters){
   lists.push({ id:"interrupted", label:"Most interrupted (not dead ends)", desc:"streets broken into pieces where the break isn't just a dead end - another street still passes through", names: nonDead.map(x=>x[0]), extra: new Map(nonDead), extraUnit:"non-dead-end breaks" });
   // Fewest intersections: how many other named streets it actually crosses, not a continuity measure.
   // Reuses the "real intersection" definition already in findIntersections() (3-way or more, so a
-  // dead end or a street simply curving through on its own never counts). Same ¼-mile length floor as
-  // "broken"/"jogs" above, so the ~2,255 trivial dead-end stubs (which would all tie at zero) don't
-  // drown out the genuinely long streets that just happen to cross very few others.
+  // dead end or a street simply curving through on its own never counts) - plus node.names.length>1,
+  // so a node where the ONLY street present meets itself (a divided roadway rejoining, a Y-branch of
+  // one street) doesn't count as an intersection either; more than one distinct street has to be there.
+  // Same ¼-mile length floor as "broken"/"jogs" above, so the ~2,255 trivial dead-end stubs (which
+  // would all tie at zero) don't drown out the genuinely long streets that just happen to cross few others.
   const interCount = new Map();
-  for (const node of inters) for (const j of node.names) interCount.set(j, (interCount.get(j)||0)+1);
+  for (const node of inters) if (node.names.length>1) for (const j of node.names) interCount.set(j, (interCount.get(j)||0)+1);
   const fewInter = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase())).map(j=>[j, interCount.get(j)||0]).sort((a,b)=>a[1]-b[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
-  lists.push({ id:"few-inter", label:"Fewest intersections", desc:"streets over ¼ mile with the fewest real intersections (3-way or more; dead ends and simple curves don't count)", names: fewInter.map(x=>x[0]), extra: new Map(fewInter), extraUnit:"intersections" });
+  lists.push({ id:"few-inter", label:"Fewest intersections", desc:"streets over ¼ mile with the fewest real intersections (3-way or more, with more than one distinct street present; dead ends and a street meeting only itself don't count)", names: fewInter.map(x=>x[0]), extra: new Map(fewInter), extraUnit:"intersections" });
   // Side-jogs: a sharp turn, a short run, then a sharp turn back - counted per street and per mile of end-to-end distance
   const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase())).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
   const jogsTop = jogCand.slice().sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
@@ -1328,6 +1331,7 @@ function renderSel(){
 }
 $("selChips").onclick=e=>{ const j=e.target.dataset.j; if (j===undefined) return; select(ui.sel.filter(x=>x!==+j),{fitTo:false}); };
 $("btnWhole").onclick=()=>{ select([],{fitTo:false}); fit(NET.bounds); say(""); };
+$("btnClear").onclick=()=>$("btnWhole").click();
 function say(html){ $("answer").innerHTML=html; }
 
 function renderLists(){
