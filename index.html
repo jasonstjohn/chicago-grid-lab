@@ -722,14 +722,14 @@ function computeStats(N, mask){
   const tot = h.reduce((a,b)=>a+b,0);
   let H=0; for (const x of h) if (x>0){ const p=x/tot; H-=p*Math.log(p); }
   const Hg=Math.log(4), Hm=Math.log(36), phi = 1-((H-Hg)/(Hm-Hg))**2;
-  const dc=[0,0,0,0,0], dead=[];
-  for (const [,d] of deg){ const k=Math.min(d[0],5); dc[k-1]++; if (d[0]===1) dead.push([d[1],d[2]]); }
+  const dc=[0,0,0,0,0,0,0,0], dead=[];   // degree 1,2,3,4,5,6,7,8+
+  for (const [,d] of deg){ const k=Math.min(d[0],8); dc[k-1]++; if (d[0]===1) dead.push([d[1],d[2]]); }
   lens.sort((a,b)=>a-b);
   const q = p => lens[Math.min(lens.length-1, Math.floor(p*(lens.length-1)))];
-  const inter = dc[2]+dc[3]+dc[4];
+  const inter = dc.slice(2).reduce((a,b)=>a+b,0);
   return { segments:cnt, miles:L/FT_MI, medianFt:q(0.5), meanFt:L/cnt, p95Ft:q(0.95), straightness:L?C/L:1,
     entropy:H, phi, cardinal: L?card/L:0, hist:Array.from(h), lens,
-    nodes:deg.size, deg:dc, meanDeg: deg.size ? (2*cnt)/deg.size : 0, fourShare: inter? dc[3]/inter : 0, dead,
+    nodes:deg.size, deg:dc, fourShare: inter? dc[3]/inter : 0, dead,
     byName: [...byName.entries()].sort((a,b)=>b[1]-a[1]) };
 }
 
@@ -1601,10 +1601,10 @@ function drawLenHist(){
   svg.innerHTML=out;
 }
 function renderTopo(){
-  const S=STATS, labels=["Dead ends (1)","Pass-through (2)","T-junctions (3)","4-way (4)","5+ way"], cls=["de","","","four",""];
+  const S=STATS, labels=["Dead ends (1)","Pass-through (2)","T-junctions (3)","4-way (4)","5-way","6-way","7-way","8-way or more"], cls=["de","","","four","","","",""];
   const mx=Math.max(...S.deg)||1;
   $("topo").innerHTML = labels.map((l,k)=>`<div><span>${l}</span><span class="track"><span class="${cls[k]}" style="width:${S.deg[k]/mx*100}%"></span></span><span class="num" style="text-align:right">${fmt(S.deg[k])}${PIN?` <small style="color:var(--muted)">/ ${fmt(PIN.s.deg[k])}</small>`:""}</span></div>`).join("")
-    + `<div><span>4-way share of intersections</span><span></span><span class="num" style="text-align:right">${fmt(S.fourShare*100,1)}%</span></div><div><span>Mean node degree</span><span></span><span class="num" style="text-align:right">${fmt(S.meanDeg,3)}</span></div>`;
+    + `<div><span>4-way share of intersections</span><span></span><span class="num" style="text-align:right">${fmt(S.fourShare*100,1)}%</span></div>`;
 }
 /* Weirdest intersections: one table, four ranking modes over the same node data.
    "multiway" doubles as an exact-degree browser (the interDeg select) so "show all the 6-way
