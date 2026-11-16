@@ -213,6 +213,7 @@ footer a,.sec a{color:var(--blue)}
       <button class="btn small" id="btnDead" type="button" aria-pressed="false">Dead ends</button>
       <button class="btn small" id="btnGhost" type="button" aria-pressed="false" title="Ghost Grid: hide the real network and show only the fictional streets filling its gaps and extending its dead ends to the city's real border">
         <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z" fill="currentColor"/><circle cx="9" cy="10" r="1.3" fill="var(--map)"/><circle cx="15" cy="10" r="1.3" fill="var(--map)"/></svg>Ghost Grid</button>
+      <button class="btn small" id="btnBoundary" type="button" aria-pressed="false" title="Draw the real city-limit polygon (Chicago Data Portal, Boundaries - City)">City limit</button>
     </div>
     <div class="ident" id="ident" hidden></div>
     <div class="legend" id="legend"></div>
@@ -280,7 +281,7 @@ footer a,.sec a{color:var(--blue)}
       <details id="topoDetails">
         <summary><h3>Topology</h3></summary>
         <div class="topo" id="topo"></div>
-        <p class="note">Nodes come from segment endpoints snapped to 1 ft, as in <code>chicago_streets_stats.py</code>. A degree-2 node is where one segment hands off to the next. Area selections cut segments at the edge, which shows up as extra dead ends.</p>
+        <p class="note">Nodes come from segment endpoints snapped to 1 ft, as in <code>chicago_streets_stats.py</code>. A degree-2 node is where one segment hands off to the next. Area selections cut segments at the edge, which shows up as extra dead ends. A degree-1 node within 250 ft of the real city boundary counts as "City-edge cutoff" instead of a dead end - the street likely continues past the mapped area, it isn't actually ending.</p>
       </details>
       <details id="interDetails">
         <summary><h3>Weirdest intersections</h3></summary>
@@ -640,6 +641,22 @@ function rayPolygonExit(rings, px, py, dx, dy, maxT){
   }
   return best;
 }
+function pointSegDist(px,py,ax,ay,bx,by){
+  const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy;
+  let t = L2 ? ((px-ax)*dx+(py-ay)*dy)/L2 : 0; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
+}
+/* Nearest distance from (x,y) to any edge of the real city-boundary polygon, over every ring of
+   every polygon (so an enclave's edge counts too, same as rayPolygonExit). Used to tell a street
+   that stops because the mapped area does (isn't really a dead end) from one that just ends. */
+function distToBoundary(rings, x, y){
+  let best = Infinity;
+  for (const ring of rings) for (let i=0;i<ring.length;i++){
+    const A=ring[i], B=ring[(i+1)%ring.length];
+    const d = pointSegDist(x,y,A[0],A[1],B[0],B[1]); if (d<best) best=d;
+  }
+  return best;
+}
 /* The one endpoint, among this piece's own features, furthest in the +1/-1 direction along
    `axis` (0=x, 1=y). Used to find a piece's own outward tip - not just any dead end it happens
    to contain, which matters for a piece that's an isolated stub with two dead ends of its own. */
@@ -698,8 +715,14 @@ function computeGhost(N, elig, boundary){
   return { links, ext };
 }
 
+// A dead end within this of the real city boundary is treated as the mapped area stopping,
+// not the street - same tolerance as GAP_FT, the project's existing "close enough to be the
+// same thing" standard, reused here rather than inventing a second one. Measured before picking
+// it: 143 of 2,255 dead ends fall within 50 ft of the boundary, 159 within 100, 224 within 250
+// (this value), 283 within 500 - no sharp knee, so treat this as a judgment call, not a derived one.
+const DEAD_END_BOUNDARY_TOL_FT = GAP_FT;
 /* ---------- Statistics over a feature mask (mirrors chicago_streets_stats.py) ---------- */
-function computeStats(N, mask){
+function computeStats(N, mask, boundary){
   const h = new Float64Array(36); let L=0, C=0, card=0, cnt=0;
   const lens=[], deg=new Map(), byName=new Map();
   for (let i=0;i<N.n;i++){
@@ -716,14 +739,18 @@ function computeStats(N, mask){
   const tot = h.reduce((a,b)=>a+b,0);
   let H=0; for (const x of h) if (x>0){ const p=x/tot; H-=p*Math.log(p); }
   const Hg=Math.log(4), Hm=Math.log(36), phi = 1-((H-Hg)/(Hm-Hg))**2;
-  const dc=[0,0,0,0,0,0,0,0], dead=[];   // degree 1,2,3,4,5,6,7,8+
-  for (const [,d] of deg){ const k=Math.min(d[0],8); dc[k-1]++; if (d[0]===1) dead.push([d[1],d[2]]); }
+  const dc=[0,0,0,0,0,0,0,0], dead=[], boundaryDead=[];   // degree 1,2,3,4,5,6,7,8+
+  for (const [,d] of deg){
+    const k=Math.min(d[0],8);
+    if (k===1 && boundary && distToBoundary(boundary,d[1],d[2])<=DEAD_END_BOUNDARY_TOL_FT) boundaryDead.push([d[1],d[2]]);
+    else { dc[k-1]++; if (k===1) dead.push([d[1],d[2]]); }
+  }
   lens.sort((a,b)=>a-b);
   const q = p => lens[Math.min(lens.length-1, Math.floor(p*(lens.length-1)))];
   const inter = dc.slice(2).reduce((a,b)=>a+b,0);
   return { segments:cnt, miles:L/FT_MI, medianFt:q(0.5), meanFt:L/cnt, p95Ft:q(0.95), straightness:L?C/L:1,
     entropy:H, phi, cardinal: L?card/L:0, hist:Array.from(h), lens,
-    nodes:deg.size, deg:dc, fourShare: inter? dc[3]/inter : 0, dead,
+    nodes:deg.size, deg:dc, fourShare: inter? dc[3]/inter : 0, dead, boundaryDead,
     byName: [...byName.entries()].sort((a,b)=>b[1]-a[1]) };
 }
 
@@ -1089,7 +1116,7 @@ function toFrame(lines){
 const $ = id => document.getElementById(id);
 let NET=null, LISTS=[], MASK=null, ELIG=null, STATS=null, filterSig="";
 let INTERS=[], INTER_ROWS=[], ANALYSIS=null, GHOST=null, BOUNDARY=null;
-const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, ghost:false, tool:"pan", piecesOf:null, focusPiece:-1, interMarks:[], interSegs:new Set() };
+const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, ghost:false, boundary:false, tool:"pan", piecesOf:null, focusPiece:-1, interMarks:[], interSegs:new Set() };
 const view = { x:0, y:0, s:0.01 };
 let colors = {};
 
@@ -1174,7 +1201,7 @@ function recompute(){
     if (b){ const mx=(NET.ep[i*4]+NET.ep[i*4+2])/2, my=(NET.ep[i*4+1]+NET.ep[i*4+3])/2; if (mx<b[0]||mx>b[2]||my<b[1]||my>b[3]) continue; }
     m[i]=1;
   }
-  MASK=m; STATS=computeStats(NET,m);
+  MASK=m; STATS=computeStats(NET,m,BOUNDARY);
   ui.piecesOf = ui.sel.length===1 ? streetPieces(NET, ui.sel[0], ELIG) : null;
   groupFeatures(); draw(); renderPanel(); renderSel(); drawIsolationHist();
 }
@@ -1262,6 +1289,15 @@ function draw(){
       ctx.strokeStyle=colorFor(k); ctx.lineWidth=(k==="near"||k==="off") ? zoomW*1.15 : selW; ctx.stroke();
     }
   }
+  if (ui.boundary && BOUNDARY){
+    ctx.strokeStyle=colors.muted; ctx.lineWidth=Math.max(1,zoomW*0.6); ctx.setLineDash([7,5]);
+    for (const ring of BOUNDARY){
+      ctx.beginPath();
+      ring.forEach(([x,y],i)=>{ const X=sx(x),Y=sy(y); if (i) ctx.lineTo(X,Y); else ctx.moveTo(X,Y); });
+      ctx.closePath(); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
   // Intersection-list overview: the nearest segment of each street at each marked corner, plus a dot on the corner.
   // Amber rather than the grid-alignment blue/red so it reads as a highlight, not another alignment category.
   const markColor = colors.cat[3];
@@ -1298,6 +1334,7 @@ function renderLegend(){
   } else h = `<div><span class="sw" style="background:${colors.ink}"></span><em>Streets</em></div>`;
   if (MASK && groups && groups.faint.length) h += `<div><span class="sw" style="background:${colors.faint}"></span><em>${ui.sel.length||ui.box?"Rest of the grid":"Filtered out"}</em></div>`;
   if (ui.ghost) h += `<div><em>Ghost Grid: the real network is hidden. Only the fictional streets show - connections across gaps, and dead ends extended to the city's real border - each colored like the real street it continues.</em></div>`;
+  if (ui.boundary) h += `<div><span class="sw" style="background:${colors.muted}"></span><em>City limit: the real boundary polygon (Chicago Data Portal, "Boundaries - City")${BOUNDARY?"":" - not loaded"}</em></div>`;
   L.innerHTML=h;
 }
 
@@ -1361,6 +1398,7 @@ $("btnFit").onclick=()=>fit(selectionBounds()||NET?.bounds);
 $("colorMode").onchange=e=>{ ui.colorMode=e.target.value; groupFeatures(); draw(); };
 $("btnDead").onclick=()=>{ ui.dead=!ui.dead; $("btnDead").setAttribute("aria-pressed",ui.dead); draw(); };
 $("btnGhost").onclick=()=>{ ui.ghost=!ui.ghost; $("btnGhost").setAttribute("aria-pressed",ui.ghost); draw(); renderLegend(); };
+$("btnBoundary").onclick=()=>{ ui.boundary=!ui.boundary; $("btnBoundary").setAttribute("aria-pressed",ui.boundary); draw(); renderLegend(); };
 
 /* ---------------- Selection, search, queries ---------------- */
 function selectionBounds(){
@@ -1594,6 +1632,7 @@ function renderTopo(){
   const S=STATS, labels=["Dead ends (1)","Pass-through (2)","T-junctions (3)","4-way (4)","5-way","6-way","7-way","8-way or more"], cls=["de","","","four","","","",""];
   const mx=Math.max(...S.deg)||1;
   $("topo").innerHTML = labels.map((l,k)=>`<div><span>${l}</span><span class="track"><span class="${cls[k]}" style="width:${S.deg[k]/mx*100}%"></span></span><span class="num" style="text-align:right">${fmt(S.deg[k])}</span></div>`).join("")
+    + `<div><span>City-edge cutoff</span><span class="track"><span style="width:${S.boundaryDead.length/mx*100}%"></span></span><span class="num" style="text-align:right">${fmt(S.boundaryDead.length)}</span></div>`
     + `<div><span>4-way share of intersections</span><span></span><span class="num" style="text-align:right">${fmt(S.fourShare*100,1)}%</span></div>`;
 }
 /* Weirdest intersections: one table, four ranking modes over the same node data.
