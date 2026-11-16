@@ -1183,7 +1183,7 @@ function recompute(){
   }
   MASK=m; STATS=computeStats(NET,m);
   ui.piecesOf = ui.sel.length===1 ? streetPieces(NET, ui.sel[0], ELIG) : null;
-  groupFeatures(); draw(); renderPanel(); renderSel();
+  groupFeatures(); draw(); renderPanel(); renderSel(); drawIsolationHist();
 }
 
 /* ---------------- Map ---------------- */
@@ -1708,8 +1708,20 @@ function renderFewInter(){
 }
 /* How many distinct other streets each street meets: 0,1,2,3,4,"5+", log count axis (18 at zero
    vs 1000+ at "5+" - a linear axis would flatten every bar but the last into invisibility). */
-let isolationActive = null;   // which bucket (if any) is toggled on, selected on the map
+/* The active bucket is derived from ui.sel, not tracked separately - so the highlight stays
+   correct however the selection changed (a bar click, the search box, a table row, Clear...). */
+function currentIsolationBucket(){
+  if (!ANALYSIS || !ui.sel.length) return null;
+  const sel = new Set(ui.sel);
+  for (let b=0; b<6; b++){
+    const names = ANALYSIS.isolation.filter(r=>Math.min(r.count,5)===b).map(r=>r.j);
+    if (names.length===sel.size && names.every(j=>sel.has(j))) return b;
+  }
+  return null;
+}
 function drawIsolationHist(){
+  if (!ANALYSIS) return;
+  const active = currentIsolationBucket();
   const buckets=[0,0,0,0,0,0], labels=["0","1","2","3","4","5+"];
   for (const {count} of ANALYSIS.isolation) buckets[Math.min(count,5)]++;
   const svg=$("isolationHist"), Wd=420, Hd=170, L=48, B=28, T=8, Rr=10;
@@ -1719,7 +1731,7 @@ function drawIsolationHist(){
   for (let p=1; p<=top; p*=10) out+=`<line x1="${L}" x2="${Wd-Rr}" y1="${Y(p).toFixed(1)}" y2="${Y(p).toFixed(1)}" stroke="${colors.faint}" stroke-dasharray="2 3"/><text x="${L-6}" y="${Y(p).toFixed(1)}" text-anchor="end" dominant-baseline="middle">${fmt(p)}</text>`;
   buckets.forEach((c,i)=>{
     const x=L+i*bw+2, w=bw-4, y=Y(c);
-    if (c>0) out+=`<rect data-bucket="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${(Hd-B-y).toFixed(1)}" fill="${i===isolationActive?colors.blue:colors.ink}" opacity=".78" style="cursor:pointer"/>`;
+    if (c>0) out+=`<rect data-bucket="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${(Hd-B-y).toFixed(1)}" fill="${i===active?colors.blue:colors.ink}" opacity=".78" style="cursor:pointer"/>`;
     out+=`<text x="${(x+w/2).toFixed(1)}" y="${y-4}" text-anchor="middle" font-size="9">${c?fmt(c):""}</text>`;
     out+=`<text x="${(x+w/2).toFixed(1)}" y="${Hd-B+16}" text-anchor="middle">${labels[i]}</text>`;
   });
@@ -1728,14 +1740,13 @@ function drawIsolationHist(){
 $("isolationHist").onclick=e=>{
   const rect=e.target.closest("rect[data-bucket]"); if (!rect) return;
   const bucket=+rect.dataset.bucket;
-  if (isolationActive===bucket){ isolationActive=null; select([],{fitTo:false}); say(""); }
+  if (currentIsolationBucket()===bucket){ select([],{fitTo:false}); say(""); }
   else {
-    isolationActive=bucket;
     const names=ANALYSIS.isolation.filter(r=>Math.min(r.count,5)===bucket).map(r=>r.j);
     select(names);
     say(`Showing ${fmt(names.length)} street${names.length===1?"":"s"} that meet ${bucket===5?"5 or more":bucket} other street${bucket===1?"":"s"}, not counting intersection nodes.`);
   }
-  drawIsolationHist();
+  // select() -> recompute() already redraws this chart, picking up the new selection.
 };
 $("fewInterTable").onclick=e=>{ if (headerClick(e, ()=>fewInterSort, v=>{ fewInterSort=v; renderFewInter(); })) return;
   const tr=e.target.closest("tr[data-j]"); if (tr){ select([+tr.dataset.j]); runQuery(NET.names[+tr.dataset.j]); } };
