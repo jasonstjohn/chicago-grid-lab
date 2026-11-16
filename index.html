@@ -212,6 +212,8 @@ footer a,.sec a{color:var(--blue)}
         <option value="plain">Color: plain</option>
       </select>
       <button class="btn small" id="btnDead" type="button" aria-pressed="false">Dead ends</button>
+      <button class="btn small" id="btnGhost" type="button" aria-pressed="false" title="Ghost Grid: fictional streets filling the gaps and extending dead ends to the map's edge">
+        <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z" fill="currentColor"/><circle cx="9" cy="10" r="1.3" fill="var(--map)"/><circle cx="15" cy="10" r="1.3" fill="var(--map)"/></svg>Ghost Grid</button>
     </div>
     <div class="ident" id="ident" hidden></div>
     <div class="legend" id="legend"></div>
@@ -592,6 +594,49 @@ function streetPieces(N, j, elig){
   return { pieces, ew, bbox:all };
 }
 
+/* Ghost Grid: fictional streets filling the gaps, plus dead ends extended outward to the map's
+   own edge. There's no official city-boundary polygon in this dataset, so the network's own
+   bounding box stands in for "the edge of the city" (see NOTES.md ledger for this and the
+   extension-cap judgment call below). */
+const GHOST_EXT_CAP_FT = FT_MI;  // only extend a dead end if the edge is within 1 mi of it
+function computeGhost(N, elig){
+  const links = [];
+  for (let j=0;j<N.names.length;j++){
+    if (N.names[j]==="(unnamed)") continue;
+    const feats = eligibleFeats(N, j, elig); if (feats.length<2) continue;
+    const groups = pieceGroups(N, feats); if (groups.length<2) continue;
+    const pieces = groups.map(fs => { const b=[Infinity,Infinity,-Infinity,-Infinity];
+      for (const f of fs){ b[0]=Math.min(b[0],N.bb[f*4]); b[1]=Math.min(b[1],N.bb[f*4+1]); b[2]=Math.max(b[2],N.bb[f*4+2]); b[3]=Math.max(b[3],N.bb[f*4+3]); }
+      return { feats:fs, bbox:b }; });
+    const all = pieces.reduce((b,p)=>[Math.min(b[0],p.bbox[0]),Math.min(b[1],p.bbox[1]),Math.max(b[2],p.bbox[2]),Math.max(b[3],p.bbox[3])],[Infinity,Infinity,-Infinity,-Infinity]);
+    const ew = (all[2]-all[0]) >= (all[3]-all[1]);
+    pieces.sort((p,q) => ew ? p.bbox[0]-q.bbox[0] : q.bbox[3]-p.bbox[3]);
+    for (let k=0;k<pieces.length-1;k++){   // connect each piece to the next one along the street
+      const p=pieces[k], q=pieces[k+1];
+      let best=Infinity, pa=null, pb=null;
+      for (const a of p.feats) for (const ea of [0,2]) for (const b of q.feats) for (const eb of [0,2]){
+        const d = Math.hypot(N.ep[a*4+ea]-N.ep[b*4+eb], N.ep[a*4+ea+1]-N.ep[b*4+eb+1]);
+        if (d<best){ best=d; pa=[N.ep[a*4+ea],N.ep[a*4+ea+1]]; pb=[N.ep[b*4+eb],N.ep[b*4+eb+1]]; }
+      }
+      if (pa) links.push([pa[0],pa[1],pb[0],pb[1]]);
+    }
+  }
+  const deg = nodeDegrees(N, elig), [xmin,ymin,xmax,ymax] = N.bounds, ext = [];
+  for (let i=0;i<N.n;i++){ if (!elig[i]) continue;
+    for (const e of [0,2]){
+      const x=N.ep[i*4+e], y=N.ep[i*4+e+1], k=Math.round(x)*1e7+Math.round(y);
+      if ((deg.get(k)||0)!==1) continue;   // only true dead ends, same definition as the Dead ends overlay
+      const o=2-e, dx0=x-N.ep[i*4+o], dy0=y-N.ep[i*4+o+1], L=Math.hypot(dx0,dy0); if (!L) continue;
+      const dx=dx0/L, dy=dy0/L;
+      let t=Infinity;
+      if (dx>0) t=Math.min(t,(xmax-x)/dx); else if (dx<0) t=Math.min(t,(xmin-x)/dx);
+      if (dy>0) t=Math.min(t,(ymax-y)/dy); else if (dy<0) t=Math.min(t,(ymin-y)/dy);
+      if (t>0 && t<=GHOST_EXT_CAP_FT) ext.push([x,y,x+dx*t,y+dy*t]);
+    }
+  }
+  return { links, ext };
+}
+
 /* ---------- Statistics over a feature mask (mirrors chicago_streets_stats.py) ---------- */
 function computeStats(N, mask){
   const h = new Float64Array(36); let L=0, C=0, card=0, cnt=0;
@@ -924,8 +969,8 @@ function toFrame(lines){
 "use strict";
 const $ = id => document.getElementById(id);
 let NET=null, LISTS=[], MASK=null, ELIG=null, STATS=null, PIN=null, filterSig="";
-let INTERS=[], INTER_ROWS=[], ANALYSIS=null;
-const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, tool:"pan", piecesOf:null, focusPiece:-1, interMarks:[], interSegs:new Set() };
+let INTERS=[], INTER_ROWS=[], ANALYSIS=null, GHOST=null;
+const ui = { sel:[], box:null, classOff:new Set(), statusOff:new Set(), colorMode:"grid", dead:false, ghost:false, tool:"pan", piecesOf:null, focusPiece:-1, interMarks:[], interSegs:new Set() };
 const view = { x:0, y:0, s:0.01 };
 let colors = {};
 
@@ -935,7 +980,7 @@ let colors = {};
 
 function readColors(){
   const cs=getComputedStyle(document.documentElement), v=k=>cs.getPropertyValue(k).trim();
-  colors={ map:v("--map"), ink:v("--ink"), muted:v("--muted"), faint:v("--faint"), blue:v("--blue"), red:v("--red"), redSoft:v("--red-soft"), panel:v("--panel"),
+  colors={ map:v("--map"), ink:v("--ink"), muted:v("--muted"), faint:v("--faint"), blue:v("--blue"), red:v("--red"), redSoft:v("--red-soft"), panel:v("--panel"), ghost:v("--c5"),
     cat:[v("--c1"),v("--c2"),v("--c3"),v("--c4"),v("--c5"),v("--c6")] };
 }
 readColors();
@@ -990,6 +1035,7 @@ function recompute(){
     nameTotals(NET, ELIG); LISTS=notableLists(NET, ELIG); renderLists();
     INTERS=findIntersections(NET, ELIG); renderIntersections();
     ANALYSIS=streetAnalysis(NET, ELIG, INTERS); renderAnalysis();
+    GHOST=computeGhost(NET, ELIG);
   }
   const m=new Uint8Array(NET.n), sel=new Set(ui.sel), b=ui.box;
   for (let i=0;i<NET.n;i++){
@@ -1061,6 +1107,13 @@ function draw(){
       ctx.beginPath(); ctx.arc(sx((b[0]+b[2])/2), sy((b[1]+b[3])/2), 8, 0, 7); ctx.strokeStyle=selColor(k); ctx.stroke(); });
   }
   if (ui.dead && STATS){ ctx.fillStyle=colors.red; const r=Math.max(1.5,Math.min(3.5,view.s*40)); ctx.beginPath(); for (const [x,y] of STATS.dead){ const X=sx(x),Y=sy(y); if (X<-5||X>W+5||Y<-5||Y>H+5) continue; ctx.moveTo(X+r,Y); ctx.arc(X,Y,r,0,7); } ctx.fill(); }
+  if (ui.ghost && GHOST){
+    ctx.setLineDash([6,5]); ctx.lineWidth=Math.max(1,zoomW*0.7); ctx.strokeStyle=colors.ghost;
+    ctx.beginPath();
+    for (const [x1,y1,x2,y2] of GHOST.links) { ctx.moveTo(sx(x1),sy(y1)); ctx.lineTo(sx(x2),sy(y2)); }
+    for (const [x1,y1,x2,y2] of GHOST.ext) { ctx.moveTo(sx(x1),sy(y1)); ctx.lineTo(sx(x2),sy(y2)); }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
   // Intersection-list overview: the nearest segment of each street at each marked corner, plus a dot on the corner.
   // Amber rather than the grid-alignment blue/red so it reads as a highlight, not another alignment category.
   const markColor = colors.cat[3];
@@ -1096,6 +1149,7 @@ function renderLegend(){
     h = NET.classes.slice(0,8).map((c,k)=>`<div><span class="sw" style="background:${colors.cat[k%6]}"></span><em>${esc(NET.classLabel(c))}</em></div>`).join("");
   } else h = `<div><span class="sw" style="background:${colors.ink}"></span><em>Streets</em></div>`;
   if (MASK && groups && groups.faint.length) h += `<div><span class="sw" style="background:${colors.faint}"></span><em>${ui.sel.length||ui.box?"Rest of the grid":"Filtered out"}</em></div>`;
+  if (ui.ghost) h += `<div><span class="sw" style="background:${colors.ghost}"></span><em>Ghost Grid: fictional streets across gaps and extended to the map's edge</em></div>`;
   L.innerHTML=h;
 }
 
@@ -1158,6 +1212,7 @@ $("btnZin").onclick=()=>zoomAt(W/2,H/2,1.6); $("btnZout").onclick=()=>zoomAt(W/2
 $("btnFit").onclick=()=>fit(selectionBounds()||NET?.bounds);
 $("colorMode").onchange=e=>{ ui.colorMode=e.target.value; groupFeatures(); draw(); };
 $("btnDead").onclick=()=>{ ui.dead=!ui.dead; $("btnDead").setAttribute("aria-pressed",ui.dead); draw(); };
+$("btnGhost").onclick=()=>{ ui.ghost=!ui.ghost; $("btnGhost").setAttribute("aria-pressed",ui.ghost); draw(); renderLegend(); };
 
 /* ---------------- Selection, search, queries ---------------- */
 function selectionBounds(){
