@@ -254,13 +254,13 @@ footer a,.sec a{color:var(--blue)}
     <section class="sec">
       <div class="scope">
         <div><h3>Measuring</h3><strong id="scopeText">Whole grid</strong></div>
+        <div id="classChips" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start"></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn small" id="btnPin" type="button">Pin for comparison</button>
           <button class="btn small" id="btnUnpin" type="button" hidden>Unpin</button>
         </div>
       </div>
-      <div id="classChips" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start"></div>
-      <details>
+      <details id="orientSizeDetails">
         <summary><h3>Orientation, grid order &amp; size</h3></summary>
         <div class="figRow">
           <svg id="rose" viewBox="0 0 300 300" width="76" height="76" role="img" aria-label="Orientation rose"></svg>
@@ -283,7 +283,7 @@ footer a,.sec a{color:var(--blue)}
 
     <section class="sec">
       <h2>Intersections</h2>
-      <details>
+      <details id="topoDetails">
         <summary><h3>Topology</h3></summary>
         <div class="topo" id="topo"></div>
         <p class="note">Nodes come from segment endpoints snapped to 1 ft, as in <code>chicago_streets_stats.py</code>. A degree-2 node is where one segment hands off to the next. Area selections cut segments at the edge, which shows up as extra dead ends.</p>
@@ -1882,7 +1882,9 @@ $("streetTable").onkeydown=e=>{ if (e.key==="Enter" && !e.target.closest(".thbtn
 $("pieces").onclick=e=>{ const k=e.target.dataset.p; if (k===undefined) return; const p=ui.piecesOf.pieces[+k]; ui.focusPiece=+k;
   const b=p.bbox, m=Math.max(b[2]-b[0],b[3]-b[1],1500); fit([(b[0]+b[2])/2-m/2-800,(b[1]+b[3])/2-m/2-800,(b[0]+b[2])/2+m/2+800,(b[1]+b[3])/2+m/2+800],0.05); };
 
-$("btnPin").onclick=()=>{ if (!STATS) return; PIN={ s:STATS, label:$("scopeText").textContent }; $("btnPin").textContent="Re-pin"; renderPanel(); say(`Pinned “${esc(PIN.label)}”. Change the selection or area to compare against it.`); };
+$("btnPin").onclick=()=>{ if (!STATS) return; PIN={ s:STATS, label:$("scopeText").textContent }; $("btnPin").textContent="Re-pin";
+  $("orientSizeDetails").open=true; $("topoDetails").open=true;   // that's where the pinned comparison actually shows up
+  renderPanel(); say(`Pinned "${esc(PIN.label)}". Change the selection or area, then look in "Orientation, grid order &amp; size" and "Topology" below - they'll show the pinned numbers alongside the current ones.`); };
 $("btnUnpin").onclick=()=>{ PIN=null; $("btnPin").textContent="Pin for comparison"; renderPanel(); };
 
 /* Floating "back to top", shown once the page has scrolled a bit */
