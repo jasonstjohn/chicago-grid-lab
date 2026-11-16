@@ -634,12 +634,37 @@ function rayPolygonExit(rings, px, py, dx, dy, maxT){
   }
   return best;
 }
+/* The one endpoint, among this piece's own features, furthest in the +1/-1 direction along
+   `axis` (0=x, 1=y). Used to find a piece's own outward tip - not just any dead end it happens
+   to contain, which matters for a piece that's an isolated stub with two dead ends of its own. */
+function extremeEndpoint(N, feats, axis, dir){
+  let best=null, bestV=-Infinity;
+  for (const f of feats) for (const e of [0,2]){
+    const v = dir * N.ep[f*4+e+axis];
+    if (v>bestV){ bestV=v; best=[f,e]; }
+  }
+  return best;
+}
 function computeGhost(N, elig, boundary){
-  const links = [];
+  const links = [], ext = [], deg = nodeDegrees(N, elig);
+  const tryExtend = (feats, axis, dir) => {   // only the piece's own outward tip may extend, never an interior dead end
+    if (!boundary) return;
+    const [f,e] = extremeEndpoint(N, feats, axis, dir);
+    const x=N.ep[f*4+e], y=N.ep[f*4+e+1], k=Math.round(x)*1e7+Math.round(y);
+    if ((deg.get(k)||0)!==1) return;   // same definition as the Dead ends overlay
+    // Skip a dead end that's already outside the city polygon: the street data and the boundary
+    // polygon are separate sources and don't perfectly line up at the edges, so a handful of dead
+    // ends sit just past the line already - nothing to extend there.
+    if (!pointInRings(boundary, x, y)) return;
+    const o=2-e, dx0=x-N.ep[f*4+o], dy0=y-N.ep[f*4+o+1], L=Math.hypot(dx0,dy0); if (!L) return;
+    const ddx=dx0/L, ddy=dy0/L;
+    const t = rayPolygonExit(boundary, x, y, ddx, ddy, 100*FT_MI);
+    if (t>0 && t<=GHOST_EXT_SANITY_FT) ext.push([x,y,x+ddx*t,y+ddy*t,f]);
+  };
   for (let j=0;j<N.names.length;j++){
     if (N.names[j]==="(unnamed)") continue;
-    const feats = eligibleFeats(N, j, elig); if (feats.length<2) continue;
-    const groups = pieceGroups(N, feats); if (groups.length<2) continue;
+    const feats = eligibleFeats(N, j, elig); if (!feats.length) continue;
+    const groups = pieceGroups(N, feats);
     const pieces = groups.map(fs => { const b=[Infinity,Infinity,-Infinity,-Infinity];
       for (const f of fs){ b[0]=Math.min(b[0],N.bb[f*4]); b[1]=Math.min(b[1],N.bb[f*4+1]); b[2]=Math.max(b[2],N.bb[f*4+2]); b[3]=Math.max(b[3],N.bb[f*4+3]); }
       return { feats:fs, bbox:b }; });
@@ -655,21 +680,11 @@ function computeGhost(N, elig, boundary){
       }
       if (pa) links.push([pa[0],pa[1],pb[0],pb[1],bestA]);
     }
-  }
-  const deg = nodeDegrees(N, elig), ext = [];
-  if (boundary) for (let i=0;i<N.n;i++){ if (!elig[i]) continue;
-    for (const e of [0,2]){
-      const x=N.ep[i*4+e], y=N.ep[i*4+e+1], k=Math.round(x)*1e7+Math.round(y);
-      if ((deg.get(k)||0)!==1) continue;   // only true dead ends, same definition as the Dead ends overlay
-      // Skip a dead end that's already outside the city polygon: the street data and the
-      // boundary polygon are separate sources and don't perfectly line up at the edges, so a
-      // handful of dead ends sit just past the line already - nothing to extend there.
-      if (!pointInRings(boundary, x, y)) continue;
-      const o=2-e, dx0=x-N.ep[i*4+o], dy0=y-N.ep[i*4+o+1], L=Math.hypot(dx0,dy0); if (!L) continue;
-      const dx=dx0/L, dy=dy0/L;
-      const t = rayPolygonExit(boundary, x, y, dx, dy, 100*FT_MI);
-      if (t>0 && t<=GHOST_EXT_SANITY_FT) ext.push([x,y,x+dx*t,y+dy*t,i]);
-    }
+    // Only the two true ends of the whole street may reach for the city border - an interior
+    // piece that's an isolated stub (dead end at both of ITS ends) never gets one, same as a
+    // real stub street never did before Ghost Grid existed.
+    tryExtend(pieces[0].feats, ew?0:1, ew?-1:+1);
+    tryExtend(pieces[pieces.length-1].feats, ew?0:1, ew?+1:-1);
   }
   return { links, ext };
 }
