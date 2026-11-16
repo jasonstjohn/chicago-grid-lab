@@ -910,7 +910,7 @@ function notableLists(N, elig, inters){
   }
   const isolated = J.filter(j=>!isOddName(N.keys[j].toUpperCase()) && !isRampStreet(N,j,elig))
     .map(j=>[j, meets.has(j) ? meets.get(j).size : 0]).filter(([,c])=>c<=1).sort((a,b)=>a[1]-b[1]||N.sL[b[0]]-N.sL[a[0]]);
-  lists.push({ id:"isolated", label:"Most isolated", desc:"streets that meet 0 or 1 other streets (distinct streets, not intersection nodes - crossing the same street twice only counts once)", names: isolated.map(x=>x[0]), extra: new Map(isolated), extraUnit:"other streets met" });
+  lists.push({ id:"isolated", label:"Most isolated", desc:"streets that meet 0 or 1 other streets (distinct streets, not intersection nodes - crossing the same street twice only counts once)", names: isolated.map(x=>x[0]), extra: new Map(isolated), extraUnit:"other streets met", open:"fewInterDetails" });
   // Side-jogs: a sharp turn, a short run, then a sharp turn back - counted per street and per mile of end-to-end distance
   const jogCand = J.filter(j=>N.sL[j]>FT_MI/4 && !isOddName(N.keys[j].toUpperCase()) && !isRampStreet(N,j,elig)).map(j=>{ const feats=eligibleFeats(N,j,elig); const n=countJogs(N,feats); return n>0 ? [j,n,feats] : null; }).filter(Boolean);
   const jogsTop = jogCand.slice().sort((a,b)=>b[1]-a[1]||N.sL[b[0]]-N.sL[a[0]]).slice(0,12);
@@ -1147,7 +1147,11 @@ async function loadData(){
     await new Promise(res=>setTimeout(res,20));
     const lines = geojsonLines(JSON.parse(await new Blob(chunks).text()));
     useNetwork(lines, toFrame(lines), "Street Center Lines", "live"); overlay(null);
-    say(`Loaded ${fmt(NET.n)} street segments. Type a street name above, or pick a notable list.`);
+    // Deep link: ?q=<query> runs the same thing typing it and hitting Show would, so a URL is
+    // shareable as-is. Set here, after the network is ready, since every query needs NET to exist.
+    const q = new URLSearchParams(location.search).get("q");
+    if (q){ ask.value = q; runQuery(q); }
+    else say(`Loaded ${fmt(NET.n)} street segments. Type a street name above, or pick a notable list.`);
   } catch(e){
     console.error(e);
     setSource("err", "<b>No street data</b>");
@@ -1380,7 +1384,7 @@ function renderSel(){
   $("selChips").innerHTML = ui.sel.map((j,k)=>`<span class="selchip" style="--sw:${selColor(k)}"><i></i>${esc(pretty(NET.names[j]))}<button type="button" data-j="${j}" aria-label="Remove ${esc(pretty(NET.names[j]))}">×</button></span>`).join("");
 }
 $("selChips").onclick=e=>{ const j=e.target.dataset.j; if (j===undefined) return; select(ui.sel.filter(x=>x!==+j),{fitTo:false}); };
-$("btnWhole").onclick=()=>{ select([],{fitTo:false}); fit(NET.bounds); say(""); };
+$("btnWhole").onclick=()=>{ select([],{fitTo:false}); fit(NET.bounds); say(""); history.replaceState(null, "", location.pathname); };
 $("btnClear").onclick=()=>$("btnWhole").click();
 function say(html){ $("answer").innerHTML=html; }
 
@@ -1389,6 +1393,7 @@ function renderLists(){
   for (const l of LISTS){ const b=document.createElement("button"); b.type="button"; b.className="chip"; b.textContent=`${l.label} (${l.short?NET.shortest.length:l.names.length})`; b.onclick=()=>showList(l); box.appendChild(b); }
 }
 function showList(l){
+  history.replaceState(null, "", "?q="+encodeURIComponent(l.label));   // so the address bar is a shareable link to this
   $("streetSort").value = l.order==="geo" ? "geo" : "sel";
   if (l.short){ showShortest(); return; }
   if (l.id==="few-inter"){ showFewInter(); return; }
@@ -1396,6 +1401,10 @@ function showList(l){
   if (l.enable && l.enable.some(k=>ui.classOff.has(k))){ l.enable.forEach(k=>ui.classOff.delete(k)); note=" Expressway and ramp classes are now switched on."; }
   select(l.names);
   say(`Showing ${esc(l.desc)}: ${l.names.slice(0,6).map(j=>`<strong>${esc(pretty(NET.names[j]))}</strong>${l.extra?` (${l.extra.get(j)} ${l.extraUnit||"pieces"})`:""}`).join(", ")}${l.names.length>6?`, and ${l.names.length-6} more`:""}.${note}`);
+  if (l.open){   // reveal the sidebar section this list lives in, same as showFewInter()/showShortest() do for their own
+    $(l.open).open = true;
+    $(l.open).scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+  }
 }
 /* Sortable column headers: click to sort, click again to reverse */
 const byName = (a,b) => NET.names[a].localeCompare(NET.names[b], undefined, {numeric:true});
@@ -1449,6 +1458,9 @@ for (const q of EXAMPLES){ const b=document.createElement("button"); b.type="but
 function runQuery(text){
   hideSuggest(); if (!NET) return;
   const r=parseQuery(NET, LISTS, text);
+  // Keep the address bar a shareable link to whatever's now showing. "list" re-sets it to the
+  // list's own label in showList(), which is fine - that's the canonical phrasing for it anyway.
+  if (r.kind!=="miss") history.replaceState(null, "", "?q="+encodeURIComponent(text));
   if (r.kind==="whole"){ $("btnWhole").click(); return; }
   if (r.kind==="list"){ showList(r.list); return; }
   if (r.kind==="intersections"){ showIntersections(r.mode, r.degree); return; }
