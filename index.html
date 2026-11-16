@@ -598,7 +598,12 @@ function streetPieces(N, j, elig){
    city limit (from the Chicago Data Portal's own boundary polygon, "Boundaries - City",
    data.cityofchicago.org/resource/qqq8-j68g; see NOTES.md). Extensions are clipped exactly to
    that polygon, so they stop at the actual border and the lake shore, not a bounding box. */
-const GHOST_EXT_CAP_FT = FT_MI;  // only extend a dead end if the real border is within 1 mi of it
+// No length limit on an extension - the request was "extend them to the edge of the city's
+// boundaries", not "...if that's nearby". Only a generous sanity ceiling, well above the city's
+// own ~34 mi diagonal, to drop the handful of rays that miss every edge from a floating-point
+// near-miss at a boundary vertex (checked: 5 of 1,602 extensions land past 30 mi, all clearly
+// degenerate - a real exit is never that far in a city this size).
+const GHOST_EXT_SANITY_FT = 40 * FT_MI;
 const BOUNDARY_URL = "data/chicago_boundary.geojson";
 function polygonRings(geom){   // GeoJSON Polygon/MultiPolygon (lon/lat) -> rings in the local x,y frame
   const polys = geom.type==="MultiPolygon" ? geom.coordinates : geom.type==="Polygon" ? [geom.coordinates] : [];
@@ -663,7 +668,7 @@ function computeGhost(N, elig, boundary){
       const o=2-e, dx0=x-N.ep[i*4+o], dy0=y-N.ep[i*4+o+1], L=Math.hypot(dx0,dy0); if (!L) continue;
       const dx=dx0/L, dy=dy0/L;
       const t = rayPolygonExit(boundary, x, y, dx, dy, 100*FT_MI);
-      if (t>0 && t<=GHOST_EXT_CAP_FT) ext.push([x,y,x+dx*t,y+dy*t,i]);
+      if (t>0 && t<=GHOST_EXT_SANITY_FT) ext.push([x,y,x+dx*t,y+dy*t,i]);
     }
   }
   return { links, ext };
@@ -1170,8 +1175,10 @@ function draw(){
   if (ui.ghost && GHOST){
     // Solid, colored exactly like the real street it continues - a ghost line should read as
     // "the same street, kept going", not as a separate category.
+    const selSet = ui.sel.length ? new Set(ui.sel) : null;
     const gsel = ui.sel.length ? new Map(ui.sel.map((j,k)=>[j,k])) : null, byKey = new Map();
     for (const seg of [...GHOST.links, ...GHOST.ext]){
+      if (selSet && !selSet.has(NET.nameIdx[seg[4]])) continue;   // only ghost the streets actually shown
       const k = colorKeyFor(NET, seg[4], gsel);
       if (!byKey.has(k)) byKey.set(k, []);
       byKey.get(k).push(seg);
