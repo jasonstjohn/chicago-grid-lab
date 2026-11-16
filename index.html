@@ -325,6 +325,9 @@ footer a,.sec a{color:var(--blue)}
         <div class="scope"><span></span><button class="btn small" id="btnExportFewInter" type="button">Export .txt</button></div>
         <div class="tablewrap"><table id="fewInterTable"></table></div>
         <p class="note" id="fewInterNote"></p>
+        <h3>Most isolated: how many other streets each one meets</h3>
+        <div class="charts"><svg id="isolationHist" viewBox="0 0 420 170" width="100%" style="max-width:520px" role="img" aria-label="Histogram of how many distinct other streets each street meets"></svg></div>
+        <p class="note">Distinct other streets met, not intersections - crossing the same street twice (both carriageways of a divided road, say) counts that street once. Log count axis: most streets meet 5 or more others, so a linear axis would hide every other bar.</p>
       </details>
       <details>
         <summary><h3>Streets without a dead end</h3></summary>
@@ -973,7 +976,21 @@ function streetAnalysis(N, elig, inters){
   for (const node of inters) if (node.names.length>1) for (const j of node.names) interCount.set(j, (interCount.get(j)||0)+1);
   const fewInter = J.map(j => ({ j, count: interCount.get(j)||0 }));
 
-  return { diag, noDead, geos, order:{ ns, ewNorth, ewSouth }, az, fewInter };
+  // How isolated a street is: the number of DISTINCT other streets it ever meets, not the number
+  // of intersection nodes - so a street crossing the same other street twice (both carriageways of
+  // a divided road, say) counts that other street once, matching "how many Other streets" per the
+  // user's phrasing, not "Fewest intersections"'s node count (the two agree only at zero).
+  const meets = new Map();
+  for (const node of inters){
+    if (node.names.length<2) continue;
+    for (const j of node.names){
+      let s = meets.get(j); if (!s){ s=new Set(); meets.set(j,s); }
+      for (const k of node.names) if (k!==j) s.add(k);
+    }
+  }
+  const isolation = J.map(j => ({ j, count: meets.has(j) ? meets.get(j).size : 0 }));
+
+  return { diag, noDead, geos, order:{ ns, ewNorth, ewSouth }, az, fewInter, isolation };
 }
 
 /* ---------- Plain-language queries ---------- */
@@ -1660,6 +1677,25 @@ function renderFewInter(){
   $("fewInterNote").textContent = `${rows.length} ordinary streets, ranked by real intersections (3-way or more, with more than one distinct street present), under the current class/status filters.`;
   $("fewInterTable").innerHTML = `<tr>${sortTh("Street",["name","name-desc"],fewInterSort)}${sortTh("Intersections",["count","count-desc"],fewInterSort,true)}<th class="r">Miles</th></tr>` +
     rows.map(r=>`<tr class="click" tabindex="0" data-j="${r.j}"><td>${esc(pretty(NET.names[r.j]))}</td><td class="r">${r.count}</td><td class="r">${fmt(NET.sL[r.j]/FT_MI,2)}</td></tr>`).join("");
+  drawIsolationHist();
+}
+/* How many distinct other streets each street meets: 0,1,2,3,4,"5+", log count axis (18 at zero
+   vs 1000+ at "5+" - a linear axis would flatten every bar but the last into invisibility). */
+function drawIsolationHist(){
+  const buckets=[0,0,0,0,0,0], labels=["0","1","2","3","4","5+"];
+  for (const {count} of ANALYSIS.isolation) buckets[Math.min(count,5)]++;
+  const svg=$("isolationHist"), Wd=420, Hd=170, L=36, B=28, T=8, Rr=10;
+  const top = Math.pow(10, Math.ceil(Math.log10(Math.max(...buckets,1))));
+  const bw=(Wd-L-Rr)/buckets.length, Y=c=>c>0 ? Hd-B-(Hd-B-T)*Math.log10(c)/Math.log10(top) : Hd-B;
+  let out=`<line x1="${L}" x2="${Wd-Rr}" y1="${Hd-B}" y2="${Hd-B}" stroke="${colors.faint}"/>`;
+  for (let p=1; p<=top; p*=10) out+=`<line x1="${L}" x2="${Wd-Rr}" y1="${Y(p).toFixed(1)}" y2="${Y(p).toFixed(1)}" stroke="${colors.faint}" stroke-dasharray="2 3"/><text x="${L-6}" y="${Y(p).toFixed(1)}" text-anchor="end" dominant-baseline="middle">${fmt(p)}</text>`;
+  buckets.forEach((c,i)=>{
+    const x=L+i*bw+2, w=bw-4, y=Y(c);
+    if (c>0) out+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${(Hd-B-y).toFixed(1)}" fill="${colors.ink}" opacity=".78"/>`;
+    out+=`<text x="${(x+w/2).toFixed(1)}" y="${y-4}" text-anchor="middle" font-size="9">${c?fmt(c):""}</text>`;
+    out+=`<text x="${(x+w/2).toFixed(1)}" y="${Hd-B+16}" text-anchor="middle">${labels[i]}</text>`;
+  });
+  svg.innerHTML=out;
 }
 $("fewInterTable").onclick=e=>{ if (headerClick(e, ()=>fewInterSort, v=>{ fewInterSort=v; renderFewInter(); })) return;
   const tr=e.target.closest("tr[data-j]"); if (tr){ select([+tr.dataset.j]); runQuery(NET.names[+tr.dataset.j]); } };
