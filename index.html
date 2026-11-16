@@ -212,7 +212,7 @@ footer a,.sec a{color:var(--blue)}
         <option value="plain">Color: plain</option>
       </select>
       <button class="btn small" id="btnDead" type="button" aria-pressed="false">Dead ends</button>
-      <button class="btn small" id="btnGhost" type="button" aria-pressed="false" title="Ghost Grid: fictional streets filling the gaps and extending dead ends to the city's real border">
+      <button class="btn small" id="btnGhost" type="button" aria-pressed="false" title="Ghost Grid: hide the real network and show only the fictional streets filling its gaps and extending its dead ends to the city's real border">
         <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"><path d="M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z" fill="currentColor"/><circle cx="9" cy="10" r="1.3" fill="var(--map)"/><circle cx="15" cy="10" r="1.3" fill="var(--map)"/></svg>Ghost Grid</button>
     </div>
     <div class="ident" id="ident" hidden></div>
@@ -1153,10 +1153,12 @@ function draw(){
   if (!NET||!groups) return;
   ctx.lineCap="round"; ctx.lineJoin="round";
   const zoomW = Math.max(0.6, Math.min(2.2, view.s*60));
-  strokeSet(groups.faint, colors.faint, Math.max(0.5, zoomW*0.7));
   const order=[...groups.keys.keys()].sort((a,b)=>(a==="on"?-1:0)-(b==="on"?-1:0));
   const selW = ui.sel.length ? Math.max(2.2, zoomW*1.8) : zoomW;
-  for (const k of order) strokeSet(groups.keys.get(k), colorFor(k), (k==="near"||k==="off") ? zoomW*1.15 : selW);
+  if (!ui.ghost){   // Ghost Mode replaces the real network with the fictional one, it doesn't overlay it
+    strokeSet(groups.faint, colors.faint, Math.max(0.5, zoomW*0.7));
+    for (const k of order) strokeSet(groups.keys.get(k), colorFor(k), (k==="near"||k==="off") ? zoomW*1.15 : selW);
+  }
   if (ui.sel.length && ui.sel.length<=300){
     ctx.lineWidth=1.6;
     ui.sel.forEach((j,k)=>{ const f=NET.nameFeat[j]; let b=[Infinity,Infinity,-Infinity,-Infinity];
@@ -1215,7 +1217,7 @@ function renderLegend(){
     h = NET.classes.slice(0,8).map((c,k)=>`<div><span class="sw" style="background:${colors.cat[k%6]}"></span><em>${esc(NET.classLabel(c))}</em></div>`).join("");
   } else h = `<div><span class="sw" style="background:${colors.ink}"></span><em>Streets</em></div>`;
   if (MASK && groups && groups.faint.length) h += `<div><span class="sw" style="background:${colors.faint}"></span><em>${ui.sel.length||ui.box?"Rest of the grid":"Filtered out"}</em></div>`;
-  if (ui.ghost) h += `<div><em>Ghost Grid: solid lines, same color as the street they continue - fictional connections across gaps, and dead ends extended to the city's real border.</em></div>`;
+  if (ui.ghost) h += `<div><em>Ghost Grid: the real network is hidden. Only the fictional streets show - connections across gaps, and dead ends extended to the city's real border - each colored like the real street it continues.</em></div>`;
   L.innerHTML=h;
 }
 
