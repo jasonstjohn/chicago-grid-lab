@@ -396,6 +396,7 @@ footer a,.sec a{color:var(--blue)}
 <script>
 "use strict";
 const FT_MI = 5280, FT_ADDR = 6.6;              // 800 house numbers per mile
+function groupNum(x,d=0){ const s=x.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d}); return Math.abs(x)<10000 ? s.replace(/,/g,"") : s; } // comma only past 4 digits
 const LAT0 = 41.88196, LON0 = -87.62782;          // State & Madison
 const FT_LAT = 364406, FT_LON = 272368;   // feet per degree at 41.88° N (WGS84)
 const DATA_URL = "data/streets.geojson";
@@ -765,7 +766,7 @@ function streetSummary(N, j, elig){
 
 /* ---------- Notable lists, computed from whatever data is loaded ---------- */
 const TRAILS = ["MILWAUKEE","ELSTON","CLARK","LINCOLN","OGDEN","ARCHER","VINCENNES","GRAND","RIDGE","BLUE ISLAND","NORTHWEST","SOUTH CHICAGO","CLYBOURN","HIGGINS","CALUMET RIVER"];
-const MILE_LINES = ["MADISON","STATE","NORTH","FULLERTON","BELMONT","IRVING PARK","LAWRENCE","DEVON","HOWARD","ROOSEVELT","31ST","PERSHING","47TH","GARFIELD","55TH","63RD","71ST","79TH","87TH","95TH","103RD","111TH","119TH","127TH","HALSTED","ASHLAND","WESTERN","KEDZIE","PULASKI","CICERO","CENTRAL","HARLEM","COTTAGE GROVE","STONY ISLAND","YATES","CHICAGO"];
+const MILE_LINES = ["MADISON","STATE","NORTH","FULLERTON","BELMONT","IRVING PARK","LAWRENCE","BRYN MAWR","DEVON","HOWARD","ROOSEVELT","CERMAK","31ST","PERSHING","47TH","GARFIELD","55TH","63RD","71ST","79TH","87TH","95TH","103RD","111TH","119TH","127TH","HALSTED","ASHLAND","WESTERN","KEDZIE","PULASKI","CICERO","CENTRAL","NARRAGANSETT","HARLEM","COTTAGE GROVE","STONY ISLAND","YATES","CHICAGO"];
 /* Shortest streets, as in the project's ordinary_streets(): every segment of the street is a surface public
    street (CLASS 2,3,4,5,7, STATUS N, type not ER/XR/SR/RL) and the name isn't a ramp, turn lane, access road etc.
    Length = extent: distance between the two far ends along the street's principal axis. */
@@ -829,7 +830,7 @@ function streetGeo(N, j, elig){
   let line=null, best=0; for (const [v,l] of ewns) if (l>best){ best=l; line=v; }
   const pos = line!==null ? line*FT_ADDR : (isNS ? x : y);   // feet-equivalent position, for ordering - the official grid line beats a noisy mean position
   const est = isNS ? Math.abs(x)/FT_ADDR : Math.abs(y)/FT_ADDR;
-  const gridLine = line!==null ? `${Math.abs(line).toLocaleString()} ${isNS?(line<0?"W":"E"):(line<0?"S":"N")}`
+  const gridLine = line!==null ? `${groupNum(Math.abs(line))} ${isNS?(line<0?"W":"E"):(line<0?"S":"N")}`
                  : !N.meta.anchored ? ""
                  : (ewnsF && est<150) ? "0 (baseline)"          // State and Madison carry EWNS 0
                  : "≈ "+(isNS?addrX(x):addrY(y));
@@ -1086,8 +1087,8 @@ function searchNames(N, text, max=40){
 }
 
 /* ---------- Addresses on the city grid ---------- */
-function addrX(x){ const n=Math.round(Math.abs(x)/FT_ADDR/10)*10; return n<50 ? "State St" : `${n.toLocaleString()} ${x<0?"W":"E"}`; }
-function addrY(y){ const n=Math.round(Math.abs(y)/FT_ADDR/10)*10; return n<50 ? "Madison St" : `${n.toLocaleString()} ${y<0?"S":"N"}`; }
+function addrX(x){ const n=Math.round(Math.abs(x)/FT_ADDR/10)*10; return n<50 ? "State St" : `${fmt(n)} ${x<0?"W":"E"}`; }
+function addrY(y){ const n=Math.round(Math.abs(y)/FT_ADDR/10)*10; return n<50 ? "Madison St" : `${fmt(n)} ${y<0?"S":"N"}`; }
 
 /* ---------- Reader: GeoJSON lines in lon/lat ---------- */
 function toFrameLonLat(c){ return [(c[0]-LON0)*FT_LON, (c[1]-LAT0)*FT_LAT]; }
@@ -1132,7 +1133,7 @@ readColors();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{ readColors(); draw(); renderPanel(); });
 new MutationObserver(()=>{ readColors(); draw(); renderPanel(); }).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
 
-const fmt = (x,d=0) => x.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmt = groupNum;
 const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const pretty = s => /[a-z]/.test(s) ? s : s.toLowerCase().replace(/\b([a-z])/g,(m,c)=>c.toUpperCase()).replace(/\b(\d+)(St|Nd|Rd|Th)\b/g,(m,a,b)=>a+b.toLowerCase());
 const selColor = k => colors.cat[k % colors.cat.length];
@@ -1363,9 +1364,13 @@ cv.addEventListener("pointerdown", e=>{
   const boxing = ui.tool==="box" || e.shiftKey;
   drag = { x:e.offsetX, y:e.offsetY, vx:view.x, vy:view.y, boxing, moved:false };
 });
+let hoverPending=false;
 cv.addEventListener("pointermove", e=>{
   if (NET && NET.meta.anchored) $("readout").textContent = `${addrX(wx(e.offsetX))} · ${addrY(wy(e.offsetY))}`;
-  if (!drag) return;
+  if (!drag){
+    if (!hoverPending){ hoverPending=true; const px=e.offsetX, py=e.offsetY; requestAnimationFrame(()=>{ hoverPending=false; identify(px,py); }); }
+    return;
+  }
   pts.set(e.pointerId,[e.offsetX,e.offsetY]);
   if (drag.pinch && pts.size===2){ const [a,b]=[...pts.values()]; view.s=drag.s*Math.hypot(a[0]-b[0],a[1]-b[1])/drag.pinch; draw(); return; }
   const dx=e.offsetX-drag.x, dy=e.offsetY-drag.y; if (Math.abs(dx)+Math.abs(dy)>4) drag.moved=true;
@@ -1377,11 +1382,10 @@ function endDrag(e){
   const d=drag; drag=null;
   if (d.pinch){ return; }
   if (d.boxing && d.box && d.moved){ ui.box=d.box; $("btnClearBox").hidden=false; setTool("pan"); recompute(); return; }
-  if (!d.moved) identify(e.offsetX, e.offsetY);
   draw();
 }
 cv.addEventListener("pointerup", endDrag); cv.addEventListener("pointercancel", endDrag);
-cv.addEventListener("pointerleave", ()=>{ $("readout").textContent=""; });
+cv.addEventListener("pointerleave", ()=>{ $("readout").textContent=""; $("ident").hidden=true; });
 cv.addEventListener("wheel", e=>{ e.preventDefault(); zoomAt(e.offsetX,e.offsetY, Math.exp(-e.deltaY*0.0015)); }, {passive:false});
 function zoomAt(px,py,f){ const x=wx(px), y=wy(py); view.s*=f; view.x=x-(px-W/2)/view.s; view.y=y+(py-H/2)/view.s; draw(); }
 
@@ -1398,13 +1402,12 @@ function identify(px,py){
   }
   const box=$("ident");
   if (best<0){ box.hidden=true; return; }
-  const j=NET.nameIdx[best], on=ui.sel.includes(j);
+  const j=NET.nameIdx[best];
   const a=(Math.atan2(NET.ep[best*4+2]-NET.ep[best*4], NET.ep[best*4+3]-NET.ep[best*4+1])*180/Math.PI+360)%180;
-  box.innerHTML = `<strong>${esc(pretty(NET.names[j]))}</strong><span class="num">${fmt(NET.len[best])} ft · bearing ${fmt(a)}°${NET.classField?` · ${esc(NET.classLabel(NET.classes[NET.clsIdx[best]]))}`:""}${NET.statusField&&!ELIG[best]?" · filtered out":""}</span>
-    <button class="btn small" type="button" data-act="only">Show only this street</button>${ui.sel.length&&!on?`<button class="btn small" type="button" data-act="add">Add to selection</button>`:""}<button class="btn small" type="button" data-act="x" aria-label="Close">×</button>`;
+  const g=streetGeo(NET, j, ELIG);
+  const name=esc(pretty(NET.names[j]));
+  box.innerHTML = `<strong>${g&&g.gridLine?`${name} is ${esc(g.gridLine)}`:name}</strong><span class="num">${fmt(NET.len[best])} ft · bearing ${fmt(a)}°${NET.classField?` · ${esc(NET.classLabel(NET.classes[NET.clsIdx[best]]))}`:""}${NET.statusField&&!ELIG[best]?" · filtered out":""}</span>`;
   box.hidden=false;
-  box.onclick = ev => { const act=ev.target.dataset.act; if (!act) return; box.hidden=true;
-    if (act==="only") select([j],{fitTo:true}); else if (act==="add") select([...ui.sel,j]); };
 }
 
 function setTool(t){ ui.tool=t; $("btnPan").setAttribute("aria-pressed",t==="pan"); $("btnBox").setAttribute("aria-pressed",t==="box"); cv.classList.toggle("selecting",t==="box"); }
