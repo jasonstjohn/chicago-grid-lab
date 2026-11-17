@@ -1087,8 +1087,8 @@ function searchNames(N, text, max=40){
 }
 
 /* ---------- Addresses on the city grid ---------- */
-function addrX(x){ const n=Math.round(Math.abs(x)/FT_ADDR/10)*10; return n<50 ? "State St" : `${fmt(n)} ${x<0?"W":"E"}`; }
-function addrY(y){ const n=Math.round(Math.abs(y)/FT_ADDR/10)*10; return n<50 ? "Madison St" : `${fmt(n)} ${y<0?"S":"N"}`; }
+function addrX(x){ const n=Math.round(Math.abs(x)/FT_ADDR/10)*10; return n<50 ? "State St" : `${groupNum(n)} ${x<0?"W":"E"}`; }
+function addrY(y){ const n=Math.round(Math.abs(y)/FT_ADDR/10)*10; return n<50 ? "Madison St" : `${groupNum(n)} ${y<0?"S":"N"}`; }
 
 /* ---------- Reader: GeoJSON lines in lon/lat ---------- */
 function toFrameLonLat(c){ return [(c[0]-LON0)*FT_LON, (c[1]-LAT0)*FT_LAT]; }
